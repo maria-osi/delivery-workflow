@@ -7,7 +7,7 @@ Paquete [APM](https://github.com/microsoft/apm) para **Claude Code, Cursor y Cod
 1. **Piensa la tarea contigo** con preguntas, cada una con su respuesta recomendada.
 2. **La deja escrita en GitHub:** issue con etiqueta, rama, commit `chore: open #N` y pull request en draft.
 3. **Escribe la spec, el plan y las tasks** en la propia issue.
-4. **La implementa en hasta nueve rondas** de código, tests y revisión de la documentación. Cada ronda deja un comentario en la issue.
+4. **La implementa en hasta nueve rondas** de código y tests, y comprueba la documentación al cerrar el bloque. Cada ronda y cada cierre dejan un comentario en la issue.
 5. **La cierra** con el commit final, el push y la petición de revisión.
 6. **Si la revisión pide cambios**, escribe spec, plan y tasks en un comentario de la misma issue y repite el ciclo.
 
@@ -151,8 +151,8 @@ Para activarla, copia la plantilla `assets/datos-personales.md` de la skill (en 
 
 Sin la sección, la guía dice en una línea que no actúa. Con ella:
 
-- Si la tarea toca datos personales, la spec recoge como requisitos los ítems que aplican, con su artículo. Si el código o la documentación no los cumplen, la ronda falla como con cualquier otro requisito. `code-tester` y `code-developer` no precargan la guía: siguen la spec.
-- Lo que `concept-tester` encuentra fuera de la spec va como nota al comentario de la ronda y no cambia el veredicto.
+- Si la tarea toca datos personales, la spec recoge como requisitos los ítems que aplican, con su artículo. Si el código o la documentación no los cumplen, la comprobación falla como con cualquier otro requisito. `code-tester` y `code-developer` no precargan la guía: siguen la spec.
+- Lo que `concept-tester` encuentra fuera de la spec va como nota al comentario de cierre y no cambia el veredicto.
 - Sin hallazgos, el reporte dice «Sin hallazgos frente al checklist vX.Y.Z (AAAA-MM-DD).».
 - Una duda que el checklist no resuelve va a `legal-advisor` como consulta legal ([Consultas legales con EUR-Lex](#consultas-legales-con-eur-lex)).
 

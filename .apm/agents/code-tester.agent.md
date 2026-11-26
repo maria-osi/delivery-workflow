@@ -4,6 +4,7 @@ description: "Escribe y ejecuta los tests de la ronda (unitarios, de lógica de 
 mode: all
 skills:
   - issue-spec
+  - say-it-straight
 ---
 
 # Subagente: Code tester

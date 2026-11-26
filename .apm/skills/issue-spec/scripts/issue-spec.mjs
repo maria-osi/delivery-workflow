@@ -184,6 +184,42 @@ export function formatReviewNotes({ reviewDecision, reviews = [], comments = [],
   return `${lines.join("\n").trim()}\n`;
 }
 
+export const ROUND_FIRST_LINE = /^<!-- (Ronda [1-9]|Cierre) -->[ \t]*$/;
+
+export function roundMark(body) {
+  const first = normalize(body ?? "").trim().split("\n")[0] ?? "";
+  return first.match(ROUND_FIRST_LINE)?.[1] ?? null;
+}
+
+// Los comentarios posteriores al último cierre: lo que todavía no se ha comprobado.
+export function sinceLastClose(notes) {
+  return notes.slice(notes.findLastIndex((note) => note.mark === "Cierre") + 1);
+}
+
+// Tasks marcadas que no figuran en ninguna línea «Tasks:». Las de manage-* son de la pull request, no del ciclo.
+export function untracedTasks(tasks, notes) {
+  const traced = new Set(
+    notes
+      .flatMap((text) => text.split("\n"))
+      .filter((line) => line.trim().startsWith("Tasks:"))
+      .flatMap((line) => line.match(/TASK-\d+/g) ?? []),
+  );
+  return normalize(tasks)
+    .split(/^(?=\s*- \[)/m)
+    .flatMap((block) => {
+      const id = block.match(/^\s*- \[[xX]\] \*\*(TASK-\d+):\*\*/)?.[1];
+      const fromPullRequest = /\*\*Agente:\*\*\s*`manage-/.test(block);
+      return id && !fromPullRequest && !traced.has(id) ? [id] : [];
+    });
+}
+
+function parseLogins(list = "") {
+  return list
+    .split(",")
+    .map((login) => login.trim().replace(/^@/, "").toLowerCase())
+    .filter(Boolean);
+}
+
 function closesIssue(body, number) {
   return new RegExp(`(?:closes|close|closed|fix|fixes|fixed|resolve|resolves|resolved)\\s+#${number}\\b`, "i").test(
     body ?? "",
@@ -243,13 +279,14 @@ function parseArgs(args) {
   const [command, number, ...rest] = args;
   if (!command || !/^\d+$/.test(number ?? "")) {
     throw new IssueSpecError(
-      "Uso: can-edit N | read N [--revision] [--section top|spec|plan|tasks] | top-hash N [--revision] | write N --expect-top H [--revision] [--spec F] [--plan F] [--tasks F] | tick N TASK-NN --expect-top H [--revision] | state N Borrador|Implementada|Fallida --expect-top H [--revision] | comment N F | reviews N [--accept LOGINS] | revision N F",
+      "Uso: can-edit N | read N [--revision] [--section top|spec|plan|tasks] | top-hash N [--revision] | write N --expect-top H [--revision] [--spec F] [--plan F] [--tasks F] | tick N TASK-NN --expect-top H [--revision] | state N Borrador|Implementada|Fallida --expect-top H [--revision] | comment N F | rounds N [--revision] [--since-close] [--accept LOGINS] | trace N [--revision] [--accept LOGINS] | reviews N [--accept LOGINS] | revision N F",
       1,
     );
   }
   const options = { positional: [] };
   for (let i = 0; i < rest.length; i++) {
     if (rest[i] === "--revision") options.revision = true;
+    else if (rest[i] === "--since-close") options.sinceClose = true;
     else if (rest[i].startsWith("--")) options[rest[i].slice(2)] = rest[++i];
     else options.positional.push(rest[i]);
   }
@@ -317,6 +354,24 @@ export async function run(
     }
     return { id: latest.id, body: latest.body ?? "" };
   };
+  const listRendered = async (path) => {
+    const parsed = JSON.parse((await call(["api", `${apiRepo}/${path}`, "--paginate", "-H", RENDERED])) || "[]");
+    return Array.isArray(parsed) ? parsed : [parsed];
+  };
+  // Comentarios de ronda y de cierre de las cuentas aceptadas. En una revisión, los posteriores a su comentario.
+  const roundNotes = async (revisionId) => {
+    const viewer = await viewerLogin();
+    const accepted = parseLogins(options.accept);
+    const all = await listRendered(`issues/${number}/comments`);
+    const start = revisionId == null ? 0 : all.findIndex((comment) => comment.id === revisionId) + 1;
+    const marked = all.slice(start).filter((comment) => roundMark(comment.body));
+    const trusted = marked.filter((comment) => isTrusted(comment, viewer, accepted));
+    const skipped = [...new Set(marked.filter((comment) => !trusted.includes(comment)).map(authorOf))];
+    if (skipped.length) {
+      warn(`Aviso: se ignoran comentarios de ronda de cuentas sin rol en el repositorio: ${skipped.join(", ")}.`);
+    }
+    return trusted.map((comment) => ({ mark: roundMark(comment.body), text: renderedBody(comment) }));
+  };
   const persist = async (body, id) => {
     if (id == null) return writeIssueBody(body);
     checkWritable(body);
@@ -375,21 +430,30 @@ export async function run(
     await withTemporary(text, (path) => call(["issue", "comment", number, ...repo, "--body-file", path]));
     return `Issue #${number}: comentario publicado.`;
   }
+  if (command === "rounds") {
+    const all = await roundNotes(options.revision ? (await source()).id : null);
+    const notes = options.sinceClose ? sinceLastClose(all) : all;
+    if (!notes.length) return "No hay comentarios de ronda.";
+    return notes.map((note) => `=== ${note.mark} ===\n${note.text.trim()}`).join("\n\n");
+  }
+  if (command === "trace") {
+    const { id, body } = await source();
+    const tasks = parseBody(body).sections.tasks;
+    if (tasks === undefined) throw new IssueSpecError("La issue no tiene sección Tasks.", 1);
+    const missing = untracedTasks(tasks, (await roundNotes(id)).map((note) => note.text));
+    if (missing.length) {
+      throw new IssueSpecError(`Tasks marcadas sin rastro en los comentarios de ronda: ${missing.join(", ")}.`, 7);
+    }
+    return `Issue #${number}: todas las tasks marcadas tienen rastro.`;
+  }
   if (command === "reviews") {
     const prs = JSON.parse(await call(["pr", "list", ...repo, "--state", "open", "--json", "number,body,url,reviewDecision"])) || [];
     const pr = (Array.isArray(prs) ? prs : []).find((item) => closesIssue(item.body, number));
     if (!pr) throw new IssueSpecError("No hay una pull request abierta que cierre esta issue.", 1);
-    const listRendered = async (path) => {
-      const parsed = JSON.parse((await call(["api", `${apiRepo}/${path}`, "--paginate", "-H", RENDERED])) || "[]");
-      return Array.isArray(parsed) ? parsed : [parsed];
-    };
     const reviews = await listRendered(`pulls/${pr.number}/reviews`);
     const comments = await listRendered(`issues/${pr.number}/comments`);
     const lineComments = await listRendered(`pulls/${pr.number}/comments`);
-    const accepted = (options.accept ?? "")
-      .split(",")
-      .map((login) => login.trim().replace(/^@/, "").toLowerCase())
-      .filter(Boolean);
+    const accepted = parseLogins(options.accept);
     const { notes, omitted, hidden } = screenNotes(
       { reviews, comments, lineComments },
       await viewerLogin(),

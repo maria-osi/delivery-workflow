@@ -72,19 +72,25 @@ _Evitar_: consulta jurídica, dictamen
 ## Ciclo
 
 **Ciclo**:
-La sucesión de rondas que convierte la spec en código comprobado. Lo abre `concept-developer` y termina cuando una ronda pasa o la novena falla.
+La sucesión de rondas y cierres que convierte la spec en código comprobado. Lo abre `concept-developer` y termina cuando un cierre pasa sin tasks pendientes o falla la novena ronda o su cierre.
 _Evitar_: bucle, pipeline
 
 **Ronda**:
-Una vuelta del ciclo: una task de código, sus tests y la comprobación de la documentación. Hay nueve como máximo.
+Una vuelta del ciclo: una task de código y sus tests. Hay nueve como máximo.
 _Evitar_: iteración, intento
 
 **Pasada**:
 Un ciclo completo de hasta nueve rondas. Una pasada nueva solo empieza con la confirmación de la persona.
 _Evitar_: ejecución, run
 
+**Bloque**:
+Las tasks de código de la issue, que se comprueban juntas contra la documentación.
+
+**Cierre del bloque**:
+Lo que sigue a la última task de código: `concept-developer` actualiza la documentación pendiente y `concept-tester` comprueba el bloque. No gasta ronda.
+
 **Veredicto**:
-Lo que concluye un tester en una ronda: pasa o falla, con las comprobaciones que fallaron.
+Lo que concluye un tester: pasa o falla, con las comprobaciones que fallaron. `concept-tester` puede concluir que pasa con observaciones de redacción.
 _Evitar_: resultado
 
 ## Piezas

@@ -6,7 +6,7 @@ import { join } from "node:path";
 import {
   parseBody, hashTop, replaceSections, tickTask, setState, findSecret, run, MAX_BODY,
   isRevisionComment, latestRevision, nextRevisionNumber, ensureRevisionHeader, formatReviewNotes,
-  isTrusted, TRUSTED_ROLES,
+  isTrusted, TRUSTED_ROLES, roundMark, sinceLastClose, untracedTasks,
 } from "../.apm/skills/issue-spec/scripts/issue-spec.mjs";
 
 const TOP = "## Qué hay que hacer\n\nAlgo.\n\n## Cómo probarlo\n\n1. Mirar.\n\nRevisan: Ada";
@@ -381,4 +381,98 @@ test("la skill nombra los mismos roles aceptados que el script", async () => {
   const line = skill.split("\n").find((text) => text.startsWith("- **Cuentas aceptadas**"));
   const roles = [...line.matchAll(/`([A-Z_]+)`/g)].map((match) => match[1]);
   assert.deepEqual(roles.sort(), [...TRUSTED_ROLES].sort());
+});
+
+const comentario = (id, login, role, text) => ({
+  id, user: { login }, author_association: role, body: text, body_text: text.replace(/^<!--[^\n]*-->\n/, ""),
+});
+const ronda = (id, n, tasks, login = "ada", role = "CONTRIBUTOR") =>
+  comentario(id, login, role, `<!-- Ronda ${n} -->\nTasks: ${tasks}\nDocumentación pendiente: README.md`);
+const cierre = (id, tasks) => comentario(id, "ada", "CONTRIBUTOR", `<!-- Cierre -->\nTasks: ${tasks}`);
+
+test("un comentario de ronda o de cierre se reconoce por la primera línea", () => {
+  assert.equal(roundMark("<!-- Ronda 3 -->\nTasks: TASK-02"), "Ronda 3");
+  assert.equal(roundMark("<!-- Cierre -->"), "Cierre");
+  assert.equal(roundMark("Texto\n<!-- Cierre -->"), null);
+  assert.equal(roundMark("<!-- Revisión 1 -->"), null);
+  assert.equal(roundMark("<!-- Ronda 10 -->"), null);
+});
+
+test("sinceLastClose deja las rondas posteriores al último cierre", () => {
+  const marks = (list) => sinceLastClose(list.map((mark) => ({ mark }))).map((note) => note.mark);
+  assert.deepEqual(marks(["Ronda 1", "Ronda 2"]), ["Ronda 1", "Ronda 2"]);
+  assert.deepEqual(marks(["Ronda 1", "Cierre", "Ronda 2"]), ["Ronda 2"]);
+  assert.deepEqual(marks(["Ronda 1", "Cierre"]), []);
+});
+
+test("rounds entrega solo las rondas de cuentas aceptadas y avisa de las ignoradas", async () => {
+  const warnings = [];
+  const call = issueConComentarios([
+    ronda(1, 1, "TASK-02"),
+    ronda(2, 2, "TASK-99", "eva", "NONE"),
+    comentario(3, "ada", "CONTRIBUTOR", "Comentario sin marca"),
+  ]);
+  const text = await run(["rounds", "7"], { run: call, warn: (message) => warnings.push(message) });
+  assert.match(text, /=== Ronda 1 ===\nTasks: TASK-02/);
+  assert.doesNotMatch(text, /TASK-99|sin marca|<!--/);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /ronda.*eva/);
+});
+
+test("rounds --accept suma la cuenta aprobada", async () => {
+  const call = issueConComentarios([ronda(2, 2, "TASK-03", "eva", "NONE")]);
+  assert.match(await run(["rounds", "7", "--accept", "eva"], { run: call }), /TASK-03/);
+});
+
+test("rounds --since-close deja solo lo pendiente", async () => {
+  const call = issueConComentarios([ronda(1, 1, "TASK-02"), cierre(2, "TASK-06"), ronda(3, 2, "TASK-03")]);
+  const text = await run(["rounds", "7", "--since-close"], { run: call });
+  assert.match(text, /TASK-03/);
+  assert.doesNotMatch(text, /TASK-02|TASK-06/);
+  const closed = issueConComentarios([ronda(1, 1, "TASK-02"), cierre(2, "TASK-06")]);
+  assert.equal(await run(["rounds", "7", "--since-close"], { run: closed }), "No hay comentarios de ronda.");
+});
+
+test("rounds --revision solo lee lo posterior a la revisión en curso", async () => {
+  const call = issueConComentarios([
+    ronda(1, 1, "TASK-02"),
+    revisionDe(2, "ada", "CONTRIBUTOR", "pedida"),
+    ronda(3, 1, "TASK-05"),
+  ]);
+  const text = await run(["rounds", "7", "--revision"], { run: call });
+  assert.match(text, /TASK-05/);
+  assert.doesNotMatch(text, /TASK-02/);
+});
+
+const TASKS = [
+  "- [x] **TASK-02:** Código", "  - **Agente:** `code-developer`",
+  "- [x] **TASK-06:** Concepto", "  - **Agente:** `concept-tester`",
+  "- [ ] **TASK-05:** Tests", "  - **Agente:** `code-tester`",
+  "- [x] **TASK-07:** Commit", "  - **Agente:** `manage-commit`",
+].join("\n");
+
+test("untracedTasks nombra las tasks marcadas del ciclo que no están en una línea Tasks", () => {
+  assert.deepEqual(untracedTasks(TASKS, []), ["TASK-02", "TASK-06"]);
+  assert.deepEqual(untracedTasks(TASKS, ["Tasks: TASK-02\nFalló TASK-06"]), ["TASK-06"]);
+  assert.deepEqual(untracedTasks(TASKS, ["Tasks: TASK-02", "Tasks: TASK-06"]), []);
+});
+
+function issueConTasks(comments) {
+  const base = issueConComentarios(comments);
+  return async (args) =>
+    args[0] === "issue" ? JSON.stringify({ body: `${TOP}\n\n## Tasks\n\n${TASKS}\n` }) : base(args);
+}
+
+test("trace sale con 7 si una task marcada no tiene rastro", async () => {
+  await assert.rejects(
+    run(["trace", "7"], { run: issueConTasks([ronda(1, 1, "TASK-02")]) }),
+    (error) => error.code === 7 && /TASK-06/.test(error.message) && !/TASK-02/.test(error.message),
+  );
+});
+
+test("trace confirma el rastro y no cuenta el de una cuenta ajena", async () => {
+  const comments = [ronda(1, 1, "TASK-02"), cierre(2, "TASK-06")];
+  assert.match(await run(["trace", "7"], { run: issueConTasks(comments) }), /tienen rastro/);
+  const foreign = [ronda(1, 1, "TASK-02"), ronda(2, 2, "TASK-06", "eva", "NONE")];
+  await assert.rejects(run(["trace", "7"], { run: issueConTasks(foreign), warn: () => {} }), { code: 7 });
 });
