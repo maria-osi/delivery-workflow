@@ -83,8 +83,9 @@ export function findSecret(text) {
 }
 
 // Roles que GitHub asigna a las cuentas que el repositorio reconoce.
-const TRUSTED_ROLES = ["OWNER", "MEMBER", "COLLABORATOR"];
-const HIDDEN_TEXT = /<!--[\s\S]*?(-->|$)/g;
+export const TRUSTED_ROLES = ["OWNER", "MEMBER", "COLLABORATOR"];
+// GitHub devuelve además el texto tal como lo muestra, en body_text.
+const RENDERED = "Accept: application/vnd.github.full+json";
 
 export function authorOf(item) {
   return item.author?.login ?? item.user?.login ?? "";
@@ -98,9 +99,17 @@ export function isTrusted(item, viewer, accepted = []) {
   return login === viewer.toLowerCase() || TRUSTED_ROLES.includes(role) || accepted.includes(login);
 }
 
-// Quita los comentarios HTML, que GitHub no muestra. Uno sin cierre llega hasta el final.
-export function stripHidden(text) {
-  return text.replace(HIDDEN_TEXT, "");
+// Cambia el cuerpo por el texto que GitHub muestra. Sin ese texto no se entrega el original.
+function renderedBody(item) {
+  if (!item.body) return "";
+  if (typeof item.body_text !== "string") {
+    throw new IssueSpecError("GitHub no devolvió el texto mostrado de un comentario. No se entrega la revisión.", 1);
+  }
+  return item.body_text;
+}
+
+function countHtmlComments(text) {
+  return text.split("<!--").length - 1;
 }
 
 // Deja lo que puede llegar a un agente y apunta qué cuentas se omiten y cuáles llevaban texto oculto.
@@ -113,8 +122,8 @@ export function screenNotes({ reviews = [], comments = [], lineComments = [] }, 
         omitted.add(authorOf(item) || "(sin autor)");
         return [];
       }
-      const body = stripHidden(item.body ?? "");
-      if (body !== (item.body ?? "")) hidden.add(authorOf(item));
+      const body = renderedBody(item);
+      if (countHtmlComments(item.body ?? "") > countHtmlComments(body)) hidden.add(authorOf(item));
       return [{ ...item, body }];
     });
   const notes = {
@@ -162,7 +171,7 @@ export function formatReviewNotes({ reviewDecision, reviews = [], comments = [],
   const lines = [`Decisión: ${reviewDecision ?? "—"}`, ""];
   for (const review of reviews) {
     if (!isChangeNote(review)) continue;
-    const author = review.author?.login ?? review.author ?? "revisor";
+    const author = review.author?.login ?? review.user?.login ?? review.author ?? "revisor";
     lines.push(`## ${author} (${review.state})`);
     if (review.body) lines.push(review.body.trim(), "");
   }
@@ -263,7 +272,10 @@ async function withTemporary(text, action) {
   }
 }
 
-export async function run(args, { run: call = gh(), today = () => new Date().toISOString().slice(0, 10) } = {}) {
+export async function run(
+  args,
+  { run: call = gh(), today = () => new Date().toISOString().slice(0, 10), warn = console.error } = {},
+) {
   const { command, number, options } = parseArgs(args);
   const repo = options.repo ? ["--repo", options.repo] : [];
   const apiRepo = options.repo ? `repos/${options.repo}` : "repos/{owner}/{repo}";
@@ -299,6 +311,10 @@ export async function run(args, { run: call = gh(), today = () => new Date().toI
       throw new IssueSpecError(`Solo hay comentarios de revisión de cuentas sin rol en el repositorio: ${logins}. No se usan.`, 1);
     }
     const latest = latestRevision(trusted);
+    const newest = revisions.at(-1);
+    if (newest !== latest) {
+      warn(`Aviso: se ignora un comentario de revisión más nuevo, de una cuenta sin rol en el repositorio: ${authorOf(newest)}.`);
+    }
     return { id: latest.id, body: latest.body ?? "" };
   };
   const persist = async (body, id) => {
@@ -363,28 +379,24 @@ export async function run(args, { run: call = gh(), today = () => new Date().toI
     const prs = JSON.parse(await call(["pr", "list", ...repo, "--state", "open", "--json", "number,body,url,reviewDecision"])) || [];
     const pr = (Array.isArray(prs) ? prs : []).find((item) => closesIssue(item.body, number));
     if (!pr) throw new IssueSpecError("No hay una pull request abierta que cierre esta issue.", 1);
-    const detail = JSON.parse(
-      await call(["pr", "view", String(pr.number), ...repo, "--json", "reviews,comments,reviewDecision,url"]),
-    );
-    let lineComments = [];
-    try {
-      const raw = await call(["api", `${apiRepo}/pulls/${pr.number}/comments`]);
-      const parsed = JSON.parse(raw || "[]");
-      lineComments = Array.isArray(parsed) ? parsed : [];
-    } catch {
-      lineComments = [];
-    }
+    const listRendered = async (path) => {
+      const parsed = JSON.parse((await call(["api", `${apiRepo}/${path}`, "--paginate", "-H", RENDERED])) || "[]");
+      return Array.isArray(parsed) ? parsed : [parsed];
+    };
+    const reviews = await listRendered(`pulls/${pr.number}/reviews`);
+    const comments = await listRendered(`issues/${pr.number}/comments`);
+    const lineComments = await listRendered(`pulls/${pr.number}/comments`);
     const accepted = (options.accept ?? "")
       .split(",")
       .map((login) => login.trim().replace(/^@/, "").toLowerCase())
       .filter(Boolean);
     const { notes, omitted, hidden } = screenNotes(
-      { reviews: detail.reviews ?? [], comments: detail.comments ?? [], lineComments },
+      { reviews, comments, lineComments },
       await viewerLogin(),
       accepted,
     );
     const output = [
-      formatReviewNotes({ reviewDecision: detail.reviewDecision ?? pr.reviewDecision, ...notes }).trimEnd(),
+      formatReviewNotes({ reviewDecision: pr.reviewDecision, ...notes }).trimEnd(),
     ];
     if (omitted.length) output.push(`Omitidos (cuentas sin rol en el repositorio): ${omitted.join(", ")}`);
     if (hidden.length) output.push(`Texto oculto quitado en comentarios de: ${hidden.join(", ")}`);
@@ -393,7 +405,8 @@ export async function run(args, { run: call = gh(), today = () => new Date().toI
   if (command === "revision") {
     const file = options.positional[0];
     if (!file) throw new IssueSpecError("Indica el fichero del comentario.", 1);
-    const n = nextRevisionNumber(await listComments());
+    const viewer = await viewerLogin();
+    const n = nextRevisionNumber((await listComments()).filter((comment) => isTrusted(comment, viewer)));
     const text = ensureRevisionHeader(await readFile(file, "utf8"), n);
     checkWritable(text);
     await withTemporary(text, (path) => call(["issue", "comment", number, ...repo, "--body-file", path]));

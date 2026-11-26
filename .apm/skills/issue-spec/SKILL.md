@@ -21,7 +21,7 @@ La forma de las tres secciones está en `<carpeta de esta skill>/assets/spec.md`
 - `tick N TASK-NN --expect-top HUELLA [--revision]`: marca esa task.
 - `state N Borrador|Implementada|Fallida --expect-top HUELLA [--revision]`: cambia la línea Estado de la spec y le pone la fecha de hoy.
 - `comment N F`: publica el fichero como comentario de la issue. Debe empezar por otra cosa que `<!-- Revisión`, que reserva la cabecera de los comentarios de revisión.
-- `reviews N [--accept login1,login2]`: escribe el texto de la revisión de la PR abierta que cierra la issue: decisión, cuerpos que piden cambios, comentarios de la conversación y comentarios de línea sin resolver. Entrega solo el texto de las cuentas aceptadas, sin los comentarios HTML, y nombra las cuentas omitidas y las que tenían texto oculto.
+- `reviews N [--accept login1,login2]`: escribe el texto de la revisión de la PR abierta que cierra la issue: decisión, cuerpos que piden cambios, comentarios de la conversación y comentarios de línea sin resolver. Entrega solo el texto de las cuentas aceptadas, tal como GitHub lo muestra (sin comentarios HTML, formato Markdown ni URL de enlaces), y nombra las cuentas omitidas y las que tenían comentarios HTML.
 - `revision N F`: publica el fichero como comentario de revisión. Si no trae `<!-- Revisión N -->`, lo añade. Devuelve la huella de esa cabecera.
 
 #### Reglas de Invocación Críticas

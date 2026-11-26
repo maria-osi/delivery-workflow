@@ -27,7 +27,7 @@ Momento en que la pull request abierta tiene `CHANGES_REQUESTED`. Spec, plan y t
 El comentario de la issue que empieza por `<!-- Revisión N -->` y lleva las plantillas de spec, plan y tasks de lo que pidió la persona revisora.
 
 **Cuenta aceptada**:
-La cuenta cuyo texto `issue-spec` entrega a los agentes desde la revisión: la del token, una con rol `OWNER`, `MEMBER` o `COLLABORATOR` y, en `reviews`, la que la persona aprueba.
+La cuenta cuyo texto `issue-spec` entrega a los agentes desde la revisión. Cuáles son lo dice la skill [`issue-spec`](.apm/skills/issue-spec/SKILL.md).
 
 **Otra pasada**:
 Momento en que la persona confirma que el ciclo vuelve a empezar después de que la novena ronda falle.
