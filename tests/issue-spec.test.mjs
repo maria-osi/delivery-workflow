@@ -476,3 +476,19 @@ test("trace confirma el rastro y no cuenta el de una cuenta ajena", async () => 
   const foreign = [ronda(1, 1, "TASK-02"), ronda(2, 2, "TASK-06", "eva", "NONE")];
   await assert.rejects(run(["trace", "7"], { run: issueConTasks(foreign), warn: () => {} }), { code: 7 });
 });
+
+test("comment no publica una marca de ronda o de cierre mal escrita", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "issue-spec-mark-"));
+  const file = join(dir, "ronda.md");
+  const calls = [];
+  const call = async (args) => (calls.push(args), "");
+  for (const first of ["<!-- Ronda 1 --> Tasks: TASK-02", "<!--Ronda 1-->", "<!-- Ronda 10 -->", "<!-- cierre -->"]) {
+    await writeFile(file, `${first}\nTexto`);
+    await assert.rejects(run(["comment", "7", file], { run: call }), { code: 1 });
+  }
+  assert.equal(calls.length, 0);
+  for (const first of ["<!-- Ronda 9 -->", "<!-- Cierre -->", "Informe de la pasada"]) {
+    await writeFile(file, `${first}\nTexto`);
+    assert.match(await run(["comment", "7", file], { run: call }), /comentario publicado/);
+  }
+});

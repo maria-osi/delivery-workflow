@@ -103,7 +103,7 @@ export function isTrusted(item, viewer, accepted = []) {
 function renderedBody(item) {
   if (!item.body) return "";
   if (typeof item.body_text !== "string") {
-    throw new IssueSpecError("GitHub no devolvió el texto mostrado de un comentario. No se entrega la revisión.", 1);
+    throw new IssueSpecError("GitHub no devolvió el texto mostrado de un comentario. No se entrega ninguno.", 1);
   }
   return item.body_text;
 }
@@ -426,6 +426,9 @@ export async function run(
     checkWritable(text);
     if (isRevisionComment(text)) {
       throw new IssueSpecError("El comentario de ronda no puede ser un comentario de revisión. Usa revision.", 1);
+    }
+    if (/^<!--\s*(ronda|cierre)/i.test(normalize(text).trim()) && !roundMark(text)) {
+      throw new IssueSpecError("La primera línea tiene que ser solo <!-- Ronda N -->, de 1 a 9, o <!-- Cierre -->. No se publica.", 1);
     }
     await withTemporary(text, (path) => call(["issue", "comment", number, ...repo, "--body-file", path]));
     return `Issue #${number}: comentario publicado.`;

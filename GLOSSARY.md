@@ -30,7 +30,7 @@ El comentario de la issue que empieza por `<!-- Revisión N -->` y lleva las pla
 La cuenta cuyo texto `issue-spec` entrega a los agentes desde la revisión. Cuáles son lo dice la skill [`issue-spec`](.apm/skills/issue-spec/SKILL.md).
 
 **Otra pasada**:
-Momento en que la persona confirma que el ciclo vuelve a empezar después de que la novena ronda falle.
+Momento en que la persona confirma que el ciclo vuelve a empezar después de que falle la novena ronda o su cierre.
 
 **Solo git**:
 La forma de dejar la tarea escrita que para con la pull request en draft enlazada, sin ciclo, para trabajar a mano.
