@@ -82,6 +82,53 @@ export function findSecret(text) {
   return null;
 }
 
+// Roles que GitHub asigna a las cuentas que el repositorio reconoce.
+const TRUSTED_ROLES = ["OWNER", "MEMBER", "COLLABORATOR"];
+const HIDDEN_TEXT = /<!--[\s\S]*?(-->|$)/g;
+
+export function authorOf(item) {
+  return item.author?.login ?? item.user?.login ?? "";
+}
+
+// Se acepta la cuenta del token, una cuenta con rol y una cuenta que la persona aprueba (en minúsculas).
+export function isTrusted(item, viewer, accepted = []) {
+  const login = authorOf(item).toLowerCase();
+  if (!login) return false;
+  const role = item.authorAssociation ?? item.author_association;
+  return login === viewer.toLowerCase() || TRUSTED_ROLES.includes(role) || accepted.includes(login);
+}
+
+// Quita los comentarios HTML, que GitHub no muestra. Uno sin cierre llega hasta el final.
+export function stripHidden(text) {
+  return text.replace(HIDDEN_TEXT, "");
+}
+
+// Deja lo que puede llegar a un agente y apunta qué cuentas se omiten y cuáles llevaban texto oculto.
+export function screenNotes({ reviews = [], comments = [], lineComments = [] }, viewer, accepted = []) {
+  const omitted = new Set();
+  const hidden = new Set();
+  const screen = (list) =>
+    list.flatMap((item) => {
+      if (!isTrusted(item, viewer, accepted)) {
+        omitted.add(authorOf(item) || "(sin autor)");
+        return [];
+      }
+      const body = stripHidden(item.body ?? "");
+      if (body !== (item.body ?? "")) hidden.add(authorOf(item));
+      return [{ ...item, body }];
+    });
+  const notes = {
+    reviews: screen(reviews.filter(isChangeNote)),
+    comments: screen(comments.filter((comment) => !comment.isResolved)),
+    lineComments: screen(lineComments.filter((comment) => !comment.isResolved)),
+  };
+  return { notes, omitted: [...omitted], hidden: [...hidden] };
+}
+
+function isChangeNote(review) {
+  return review.state === "CHANGES_REQUESTED" || review.state === "COMMENTED";
+}
+
 export const REVISION_FIRST_LINE = /^<!-- Revisión (\d+) -->[ \t]*$/;
 
 export function isRevisionComment(body) {
@@ -114,7 +161,7 @@ export function ensureRevisionHeader(text, number) {
 export function formatReviewNotes({ reviewDecision, reviews = [], comments = [], lineComments = [] }) {
   const lines = [`Decisión: ${reviewDecision ?? "—"}`, ""];
   for (const review of reviews) {
-    if (review.state !== "CHANGES_REQUESTED" && review.state !== "COMMENTED") continue;
+    if (!isChangeNote(review)) continue;
     const author = review.author?.login ?? review.author ?? "revisor";
     lines.push(`## ${author} (${review.state})`);
     if (review.body) lines.push(review.body.trim(), "");
@@ -187,7 +234,7 @@ function parseArgs(args) {
   const [command, number, ...rest] = args;
   if (!command || !/^\d+$/.test(number ?? "")) {
     throw new IssueSpecError(
-      "Uso: can-edit N | read N [--revision] [--section top|spec|plan|tasks] | top-hash N [--revision] | write N --expect-top H [--revision] [--spec F] [--plan F] [--tasks F] | tick N TASK-NN --expect-top H [--revision] | state N Borrador|Implementada|Fallida --expect-top H [--revision] | comment N F | reviews N | revision N F",
+      "Uso: can-edit N | read N [--revision] [--section top|spec|plan|tasks] | top-hash N [--revision] | write N --expect-top H [--revision] [--spec F] [--plan F] [--tasks F] | tick N TASK-NN --expect-top H [--revision] | state N Borrador|Implementada|Fallida --expect-top H [--revision] | comment N F | reviews N [--accept LOGINS] | revision N F",
       1,
     );
   }
@@ -236,9 +283,22 @@ export async function run(args, { run: call = gh(), today = () => new Date().toI
     const parsed = JSON.parse(raw || "[]");
     return Array.isArray(parsed) ? parsed : [parsed];
   };
+  // La cuenta del GITHUB_TOKEN con el que gh.sh lanza gh.
+  const viewerLogin = async () => {
+    const { login } = JSON.parse((await call(["api", "user"])) || "{}");
+    if (!login) throw new IssueSpecError("No se pudo saber de qué cuenta es el token.", 1);
+    return login;
+  };
   const source = async () => {
     if (!options.revision) return { id: null, body: await readIssueBody() };
-    const latest = latestRevision(await listComments());
+    const viewer = await viewerLogin();
+    const revisions = (await listComments()).filter((comment) => isRevisionComment(comment.body ?? ""));
+    const trusted = revisions.filter((comment) => isTrusted(comment, viewer));
+    if (revisions.length && !trusted.length) {
+      const logins = [...new Set(revisions.map(authorOf))].join(", ");
+      throw new IssueSpecError(`Solo hay comentarios de revisión de cuentas sin rol en el repositorio: ${logins}. No se usan.`, 1);
+    }
+    const latest = latestRevision(trusted);
     return { id: latest.id, body: latest.body ?? "" };
   };
   const persist = async (body, id) => {
@@ -314,12 +374,21 @@ export async function run(args, { run: call = gh(), today = () => new Date().toI
     } catch {
       lineComments = [];
     }
-    return formatReviewNotes({
-      reviewDecision: detail.reviewDecision ?? pr.reviewDecision,
-      reviews: detail.reviews ?? [],
-      comments: detail.comments ?? [],
-      lineComments,
-    });
+    const accepted = (options.accept ?? "")
+      .split(",")
+      .map((login) => login.trim().replace(/^@/, "").toLowerCase())
+      .filter(Boolean);
+    const { notes, omitted, hidden } = screenNotes(
+      { reviews: detail.reviews ?? [], comments: detail.comments ?? [], lineComments },
+      await viewerLogin(),
+      accepted,
+    );
+    const output = [
+      formatReviewNotes({ reviewDecision: detail.reviewDecision ?? pr.reviewDecision, ...notes }).trimEnd(),
+    ];
+    if (omitted.length) output.push(`Omitidos (cuentas sin rol en el repositorio): ${omitted.join(", ")}`);
+    if (hidden.length) output.push(`Texto oculto quitado en comentarios de: ${hidden.join(", ")}`);
+    return `${output.join("\n\n")}\n`;
   }
   if (command === "revision") {
     const file = options.positional[0];

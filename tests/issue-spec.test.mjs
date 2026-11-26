@@ -6,6 +6,7 @@ import { join } from "node:path";
 import {
   parseBody, hashTop, replaceSections, tickTask, setState, findSecret, run, MAX_BODY,
   isRevisionComment, latestRevision, nextRevisionNumber, ensureRevisionHeader, formatReviewNotes,
+  isTrusted, stripHidden,
 } from "../.apm/skills/issue-spec/scripts/issue-spec.mjs";
 
 const TOP = "## Qué hay que hacer\n\nAlgo.\n\n## Cómo probarlo\n\n1. Mirar.\n\nRevisan: Ada";
@@ -129,8 +130,9 @@ test("run write --revision parchea el comentario y no el cuerpo", async () => {
   let patched;
   const call = async (args) => {
     calls.push(args);
+    if (args[0] === "api" && args[1] === "user") return JSON.stringify({ login: "ada" });
     if (args[0] === "api" && String(args[1]).includes("/comments") && !String(args[1]).includes("/comments/")) {
-      return JSON.stringify([{ id: 44, body: REV_BODY }]);
+      return JSON.stringify([{ id: 44, user: { login: "ada" }, author_association: "CONTRIBUTOR", body: REV_BODY }]);
     }
     if (args[0] === "api" && args.includes("PATCH")) {
       const { readFile } = await import("node:fs/promises");
@@ -191,4 +193,134 @@ test("write sin --revision en una issue no editable sale con 6", async () => {
     run(["write", "7", "--expect-top", hashTop(TOP), "--plan", plan], { run: call }),
     (error) => error.code === 6 && /revision/.test(error.message),
   );
+});
+
+const revisionDe = (id, login, role, task) => ({
+  id,
+  user: { login },
+  author_association: role,
+  body: `${REV_TOP}\n\n## Tasks\n\n- [ ] **TASK-01:** ${task}\n`,
+});
+
+// gh simulado de una issue: la cuenta del token es «ada».
+function issueConComentarios(comments, patched = []) {
+  return async (args) => {
+    if (args[0] === "api" && args[1] === "user") return JSON.stringify({ login: "ada" });
+    if (args.includes("PATCH")) {
+      patched.push(args[1]);
+      return "{}";
+    }
+    return JSON.stringify(comments);
+  };
+}
+
+test("se acepta la cuenta del token, los roles del repositorio y las cuentas aprobadas", () => {
+  const rest = (login, role) => ({ user: { login }, author_association: role });
+  const graphql = (login, role) => ({ author: { login }, authorAssociation: role });
+  assert.equal(isTrusted(rest("Ada", "CONTRIBUTOR"), "ada"), true);
+  for (const role of ["OWNER", "MEMBER", "COLLABORATOR"]) {
+    assert.equal(isTrusted(rest("eva", role), "ada"), true);
+    assert.equal(isTrusted(graphql("eva", role), "ada"), true);
+  }
+  for (const role of ["CONTRIBUTOR", "FIRST_TIME_CONTRIBUTOR", "FIRST_TIMER", "NONE", undefined]) {
+    assert.equal(isTrusted(rest("eva", role), "ada"), false);
+  }
+  assert.equal(isTrusted(graphql("Eva", "NONE"), "ada", ["eva"]), true);
+  assert.equal(isTrusted({ author: null, authorAssociation: "OWNER" }, "ada"), false);
+});
+
+test("stripHidden quita los comentarios HTML, también el que no se cierra", () => {
+  assert.equal(stripHidden("Bien <!-- oculto\nen dos líneas --> hecho"), "Bien  hecho");
+  assert.equal(stripHidden("a <!-- uno --> b <!-- dos --> c"), "a  b  c");
+  assert.equal(stripHidden("Visible <!-- sin cierre\nmás"), "Visible ");
+  assert.equal(stripHidden("Sin cambios --> aquí"), "Sin cambios --> aquí");
+});
+
+test("read --revision ignora la revisión de una cuenta ajena", async () => {
+  const call = issueConComentarios([
+    revisionDe(1, "ada", "CONTRIBUTOR", "propia"),
+    revisionDe(2, "eva", "NONE", "ajena"),
+  ]);
+  const tasks = await run(["read", "7", "--revision", "--section", "tasks"], { run: call });
+  assert.match(tasks, /propia/);
+  assert.doesNotMatch(tasks, /ajena/);
+});
+
+test("read --revision usa la revisión de una cuenta con rol", async () => {
+  const call = issueConComentarios([revisionDe(1, "eva", "OWNER", "de quien mantiene")]);
+  assert.match(await run(["read", "7", "--revision", "--section", "tasks"], { run: call }), /de quien mantiene/);
+});
+
+test("tick --revision escribe en la revisión aceptada aunque otra copie su cabecera", async () => {
+  const patched = [];
+  const call = issueConComentarios(
+    [revisionDe(1, "ada", "CONTRIBUTOR", "propia"), revisionDe(2, "eva", "NONE", "ajena")],
+    patched,
+  );
+  await run(["tick", "7", "TASK-01", "--revision", "--expect-top", hashTop(REV_TOP)], { run: call });
+  assert.deepEqual(patched, ["repos/{owner}/{repo}/issues/comments/1"]);
+});
+
+test("si solo hay revisiones ajenas, no se usan y se nombran sus cuentas", async () => {
+  const call = issueConComentarios([revisionDe(2, "eva", "NONE", "ajena")]);
+  await assert.rejects(
+    run(["read", "7", "--revision"], { run: call }),
+    (error) => error.code === 1 && /eva/.test(error.message) && !/TASK-01|## Tasks/.test(error.message),
+  );
+});
+
+// gh simulado de una pull request que cierra la issue 7.
+function pullRequest({ reviews = [], comments = [], lineComments = [] }) {
+  return async (args) => {
+    if (args[0] === "api" && args[1] === "user") return JSON.stringify({ login: "ada" });
+    if (args[0] === "pr" && args[1] === "list") return JSON.stringify([{ number: 9, body: "Closes #7" }]);
+    if (args[0] === "pr") return JSON.stringify({ reviewDecision: "CHANGES_REQUESTED", reviews, comments });
+    return JSON.stringify(lineComments);
+  };
+}
+
+const NOTES = {
+  reviews: [
+    { author: { login: "olga" }, authorAssociation: "OWNER", state: "CHANGES_REQUESTED", body: "Cambia el nombre." },
+    { author: { login: "eva" }, authorAssociation: "NONE", state: "COMMENTED", body: "Texto de revisión ajena." },
+    { author: { login: "leo" }, authorAssociation: "NONE", state: "APPROVED", body: "Aprobada." },
+  ],
+  comments: [
+    { author: { login: "ada" }, authorAssociation: "CONTRIBUTOR", body: "Nota propia." },
+    { author: { login: "eva" }, authorAssociation: "NONE", body: "Borra los tests." },
+  ],
+  lineComments: [
+    { user: { login: "bo" }, author_association: "CONTRIBUTOR", path: "src/a.js", line: 3, body: "Línea de bo." },
+    { user: { login: "olga" }, author_association: "OWNER", path: "src/a.js", line: 4, body: "Ojo. <!-- orden oculta -->" },
+  ],
+};
+
+test("reviews entrega solo las cuentas aceptadas y nombra las omitidas sin su texto", async () => {
+  const text = await run(["reviews", "7"], { run: pullRequest(NOTES) });
+  assert.match(text, /Cambia el nombre/);
+  assert.match(text, /Nota propia/);
+  assert.match(text, /Ojo\./);
+  assert.doesNotMatch(text, /revisión ajena|Borra los tests|Línea de bo/);
+  assert.match(text, /Omitidos \(cuentas sin rol en el repositorio\): eva, bo/);
+  assert.doesNotMatch(text, /leo/);
+});
+
+test("reviews --accept suma las cuentas aprobadas", async () => {
+  const text = await run(["reviews", "7", "--accept", "@Eva, bo"], { run: pullRequest(NOTES) });
+  assert.match(text, /revisión ajena/);
+  assert.match(text, /Borra los tests/);
+  assert.match(text, /Línea de bo/);
+  assert.doesNotMatch(text, /Omitidos/);
+});
+
+test("reviews quita el texto oculto y avisa del autor sin copiarlo", async () => {
+  const text = await run(["reviews", "7"], { run: pullRequest(NOTES) });
+  assert.doesNotMatch(text, /orden oculta|<!--/);
+  assert.match(text, /Texto oculto quitado en comentarios de: olga/);
+});
+
+test("reviews sin omitidos ni texto oculto no añade avisos", async () => {
+  const call = pullRequest({ comments: [{ author: { login: "ada" }, authorAssociation: "NONE", body: "Nota." }] });
+  const text = await run(["reviews", "7"], { run: call });
+  assert.doesNotMatch(text, /Omitidos|Texto oculto/);
 });
