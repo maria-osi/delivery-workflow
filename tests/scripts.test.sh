@@ -404,6 +404,7 @@ for agent in concept-developer concept-tester; do
 done
 check "delivery-workflow cierra el bloque sin gastar ronda" bash -c "grep -qF '**Cierre del bloque:** No gasta ronda.' '$dw'"
 check "delivery-workflow comprueba el rastro antes de dar por pasada la spec" grep -qF '`issue-spec trace N` confirma que cada task marcada tiene rastro' "$dw"
+check "delivery-workflow corrige las observaciones de redacción sin gastar ronda" grep -qF 'se corrigen una sola vez, sin gastar ronda' "$dw"
 check "la plantilla de tasks no reserva una task al linter" bash -c "! grep -qi 'ejecutar el linter' '${skills}/issue-spec/assets/tasks.md'"
 check "delivery-workflow nombra legal-advisor en herramientas" grep -qF '**Subagente `legal-advisor`:**' "$dw"
 

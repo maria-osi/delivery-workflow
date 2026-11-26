@@ -87,7 +87,7 @@ _Evitar_: ejecución, run
 Las tasks de código de la issue, que se comprueban juntas contra la documentación.
 
 **Cierre del bloque**:
-Lo que sigue a la última task de código: `concept-developer` actualiza la documentación pendiente y `concept-tester` comprueba el bloque. No gasta ronda.
+Lo que sigue a la última task de código: `concept-developer` actualiza la documentación pendiente y `concept-tester` comprueba el bloque. Las observaciones de redacción se corrigen y se vuelven a comprobar una vez. No gasta ronda.
 
 **Veredicto**:
 Lo que concluye un tester: pasa o falla, con las comprobaciones que fallaron. `concept-tester` puede concluir que pasa con observaciones de redacción.
