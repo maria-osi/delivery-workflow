@@ -592,18 +592,19 @@ export async function reviewStates(client, number) {
 }
 
 // Pide cambios quien lo marcó en su revisión o dejó un hilo sin resolver. El autor no cuenta.
-export async function reviewSummary(client, mergeRequest) {
+// Con withAuthor cuenta lo de cualquiera, también quien creó el merge request: es el modo unipersonal.
+export async function reviewSummary(client, mergeRequest, { withAuthor = false } = {}) {
   const number = mergeRequest.iid;
   const states = await reviewStates(client, number);
   const discussions = await client.paginate(mrPath(client, number, "/discussions"));
   const requested = states ? [...states].filter(([, state]) => state === "REQUESTED_CHANGES").map(([name]) => name) : [];
-  const threads = discussions.filter((thread) =>
-    thread.notes.some((note) => note.resolvable && !note.resolved) && thread.notes[0].author.id !== mergeRequest.author.id);
+  const threads = discussions.filter((thread) => thread.notes.some((note) => note.resolvable && !note.resolved)
+    && (withAuthor || thread.notes[0].author.id !== mergeRequest.author.id));
   const askers = [...new Set([...requested, ...threads.map((thread) => thread.notes[0].author.username)])];
   // Un comentario general no es un hilo: se recoge de quien pide cambios. Si la instancia no dice quién los
   // marcó en su revisión, de cualquiera que no sea el autor.
   const notes = discussions.flatMap((thread) => thread.notes).filter((note) => !note.resolvable && !note.system
-    && note.author.id !== mergeRequest.author.id && (!states || askers.includes(note.author.username)));
+    && (withAuthor || (note.author.id !== mergeRequest.author.id && (!states || askers.includes(note.author.username)))));
   let decision = "CHANGES_REQUESTED";
   if (!askers.length) {
     const { data } = await client.request("GET", mrPath(client, number, "/approvals"));

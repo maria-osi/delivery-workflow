@@ -63,6 +63,10 @@ Una persona sola trabaja en `staging`, una tarea cada vez, y lleva cada una a la
   - paso 9: con «solo git», para con la pull request abierta y enlazada, y di que no se fusiona hasta terminar el trabajo.
 - **Final del ciclo (paso 12):** no se piden revisores. Si la issue tiene una línea `Revisan:`, dilo. Di que la pull request está lista y que la persona la fusiona con merge commit, para que `staging` y la rama por defecto no diverjan.
 - **Si el ciclo falla:** la pull request sigue abierta. Di que no se fusiona hasta que otra pasada lo resuelva.
+- **Cambios pedidos:** la persona los pide en el chat («la PR pide cambios»); no se espera `CHANGES_REQUESTED`. La línea `Pull request:` tiene que nombrar la abierta de `staging` y su issue. Con la pull request ya fusionada, o si el cambio afecta a varias tareas, va en una issue nueva: dilo. Lanza `pull-changes` con `--unipersonal` y sigue los pasos de «Cambios pedidos», con estas diferencias:
+  - paso 1: `issue-spec reviews N --unipersonal`, que deja los hilos sin resolver y lo general posterior a la última revisión, también lo que escribió quien abrió la pull request. Si no hay cambios pedidos y no nombra cuentas omitidas, para y dilo;
+  - paso 2: el encargo de `concept-developer` dice además unipersonal;
+  - paso 5: no se llama a `manage-pr` y su task de la fase Pull request queda sin marcar. Pide a la persona que resuelva los hilos atendidos y di que fusiona con merge commit.
 - **Guardar un trozo y otra pasada:** los commits van en `staging`. Antes del commit, comprueba que `check-status` dice esa rama; si dice otra, lanza `pull-changes` con `--unipersonal`.
 
 ### El ciclo

@@ -130,6 +130,16 @@ El otro valor es `equipo`, el comportamiento por defecto cuando el fichero no es
 - **Pull request:** va de `staging` a la rama por defecto y se abre sin draft ni revisores. Fusiónala cuando el flujo diga que está lista: antes está abierta, pero incompleta.
 - **Fusión:** la haces tú, con merge commit. Con squash o rebase, `staging` y la rama por defecto divergen. Al fusionar se cierra la issue.
 
+Una tarea de principio a fin:
+
+1. Pide «Crea la issue y hazla: …». El flujo pasa a `staging`, abre la pull request y hace el ciclo ahí.
+2. Cuando diga que está lista, revísala en el forge y comenta en las líneas o en la conversación.
+3. Para pedir cambios, escribe en el chat «La PR pide cambios». El flujo lee los hilos sin resolver y los comentarios generales posteriores a la última revisión, escribe spec, plan y tasks en un comentario de la issue y repite el ciclo en la misma pull request. De las cuentas sin rol en el repositorio pregunta antes cuáles apruebas.
+4. Resuelve los hilos atendidos: uno sin resolver vuelve a contar en la siguiente petición.
+5. Fusiona con merge commit y pide la tarea siguiente.
+
+Un cambio posterior a la fusión, o que afecta a varias tareas, va en una issue nueva.
+
 ## Recomendado
 
 Tras instalar, estos pasos mejoran el resultado.

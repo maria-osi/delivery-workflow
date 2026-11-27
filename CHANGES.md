@@ -81,6 +81,7 @@ Estos cambios las juntan en un paquete APM que se instala en cualquier proyecto 
 - **Huecos.** Como en ChromaDB, `concept-developer` marca como hueco lo que el proyecto no responde y para. Aquí el orquestador pregunta a la persona y lo vuelve a llamar con las respuestas antes de la ronda 1.
 - **Consultas legales.** Nuevo. Si `concept-developer` o `concept-tester` devuelven dudas de protección de datos que la guía no resuelve, el orquestador llama a `legal-advisor` con todas y después a `concept-developer` con las respuestas, sin gastar ronda. Lo que `legal-advisor` no resuelve es un hueco.
 - **Sin aprobación humana.** Como en ChromaDB, el ciclo no espera a que nadie apruebe la spec.
+- **Cambios pedidos en modo unipersonal.** Nuevo. Se piden en el chat. `reviews --unipersonal` entrega los hilos sin resolver y lo general posterior a la última revisión, también de quien creó la pull request, y las correcciones van en la misma pull request de `staging`.
 - **Commit final.** Como en ChromaDB, un solo commit con los ficheros del ciclo al terminar, con el desglose y el pie de `commit-changes` (`Refs #N`).
 
 ## Sin cambios

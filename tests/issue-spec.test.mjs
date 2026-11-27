@@ -6,7 +6,7 @@ import { join } from "node:path";
 import {
   parseBody, hashTop, replaceSections, tickTask, setState, findSecret, run, MAX_BODY,
   isRevisionComment, latestRevision, nextRevisionNumber, ensureRevisionHeader, formatReviewNotes,
-  isTrusted, TRUSTED_ROLES, roundMark, sinceLastClose, untracedTasks,
+  isTrusted, TRUSTED_ROLES, roundMark, sinceLastClose, untracedTasks, NOTHING_PENDING,
 } from "../.apm/skills/issue-spec/scripts/issue-spec.mjs";
 
 const TOP = "## Qué hay que hacer\n\nAlgo.\n\n## Cómo probarlo\n\n1. Mirar.\n\nRevisan: Ada";
@@ -430,6 +430,76 @@ test("reviews no consulta los hilos si no hay comentarios de línea", async () =
   const calls = [];
   await run(["reviews", "7"], { run: pullRequest({ comments: [nota("ada", "NONE", "Nota.")] }, calls) });
   assert.equal(calls.filter((args) => args[1] === "graphql").length, 0);
+});
+
+// gh simulado en unipersonal: la issue 7 con sus revisiones y la pull request 9 que la cierra.
+function soloRequest({ revisions = [], ...data }) {
+  const base = pullRequest(data);
+  return async (args) => (args[1].endsWith("issues/7/comments") ? JSON.stringify(revisions) : base(args));
+}
+const day = (n) => `2026-11-${String(n).padStart(2, "0")}T10:00:00Z`;
+const mark = (id, login, role, n) => ({ ...nota(login, role, "<!-- Revisión 1 -->\n\n## Spec"), id, created_at: day(n) });
+const general = (n, text, login = "ada") => nota(login, login === "ada" ? "OWNER" : "NONE", text, { created_at: day(n) });
+const solo = async (data, ...args) => run(["reviews", "7", "--unipersonal", ...args], { run: soloRequest(data) });
+
+test("reviews --unipersonal sin revisión anterior entrega todo lo general", async () => {
+  const text = await solo({ comments: [general(1, "Cambia el título.")] });
+  assert.match(text, /^Decisión: —/);
+  assert.match(text, /- ada: Cambia el título\./);
+});
+
+test("reviews --unipersonal entrega lo general posterior a la última revisión aceptada", async () => {
+  const text = await solo({
+    revisions: [mark(1, "ada", "OWNER", 2), mark(2, "ada", "OWNER", 5)],
+    comments: [general(4, "Ya atendido."), general(6, "Pendiente.")],
+    reviews: [
+      nota("ada", "OWNER", "Revisión vieja.", { state: "COMMENTED", submitted_at: day(3) }),
+      nota("ada", "OWNER", "Revisión nueva.", { state: "COMMENTED", submitted_at: day(7) }),
+    ],
+  });
+  assert.match(text, /Pendiente\./);
+  assert.match(text, /Revisión nueva\./);
+  assert.doesNotMatch(text, /Ya atendido|Revisión vieja/);
+});
+
+test("reviews --unipersonal no corta por una revisión de una cuenta sin rol", async () => {
+  const text = await solo({ revisions: [mark(1, "eva", "NONE", 9)], comments: [general(4, "Sigue pendiente.")] });
+  assert.match(text, /Sigue pendiente/);
+});
+
+test("reviews --unipersonal entrega los hilos sin resolver aunque sean anteriores", async () => {
+  const lineComments = [
+    linea(11, "ada", "OWNER", "Hilo abierto.", { created_at: day(1) }),
+    linea(12, "ada", "OWNER", "Hilo cerrado.", { created_at: day(8) }),
+  ];
+  const threads = [[{ resolved: false, ids: [11] }, { resolved: true, ids: [12] }]];
+  const text = await solo({ revisions: [mark(1, "ada", "OWNER", 5)], lineComments, threads });
+  assert.match(text, /Hilo abierto/);
+  assert.doesNotMatch(text, /Hilo cerrado/);
+});
+
+test("reviews --unipersonal dice que no hay cambios, sin contar revisiones sin cuerpo", async () => {
+  const data = {
+    revisions: [mark(1, "ada", "OWNER", 5)],
+    comments: [general(4, "Ya atendido.")],
+    reviews: [nota("ada", "OWNER", "", { state: "COMMENTED", submitted_at: day(8) })],
+    lineComments: [linea(12, "ada", "OWNER", "Hilo cerrado.", { created_at: day(8) })],
+    threads: [[{ resolved: true, ids: [12] }]],
+  };
+  assert.equal(await solo(data), `${NOTHING_PENDING}\n`);
+});
+
+test("reviews --unipersonal nombra la cuenta sin rol con texto pendiente y admite aprobarla", async () => {
+  const data = { comments: [general(6, "Cambia todo.", "eva")] };
+  const text = await solo(data);
+  assert.match(text, /No hay cambios pedidos[\s\S]*Omitidos.*eva/);
+  assert.doesNotMatch(text, /Cambia todo/);
+  assert.match(await solo(data, "--accept", "eva"), /Cambia todo/);
+});
+
+test("reviews sin --unipersonal no corta por fecha", async () => {
+  const data = { revisions: [mark(1, "ada", "OWNER", 5)], comments: [general(4, "Anterior.")] };
+  assert.match(await run(["reviews", "7"], { run: soloRequest(data) }), /Anterior\./);
 });
 
 test("read --revision avisa si ignora una revisión ajena más nueva", async () => {

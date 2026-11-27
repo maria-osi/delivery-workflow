@@ -235,6 +235,24 @@ test("check-status dice que falta Node y termina", () => {
   assert.match(result.stdout, /^Node: no instalado/m);
 });
 
+test("issue-spec reviews --unipersonal cuenta lo de quien creó el merge request y corta por la revisión", () => {
+  const note = (body, day) => ({ notes: [{ author: ADA, body, system: false, resolvable: false, created_at: `2026-11-${day}T10:00:00Z` }] });
+  const revision = { id: 1, author: ADA, system: false, body: "<!-- Revisión 1 -->", created_at: "2026-11-05T10:00:00Z" };
+  const gl = project({
+    issues: { 7: { iid: 7, state: "opened", description: "x", author: ADA, assignees: [], notes: [revision] } },
+    mergeRequests: { 1: mergeRequest({ discussions: [note("Nota atendida", "04"), note("Nota pendiente", "06"), thread(ADA), thread(ADA, true, "Resuelto")] }) },
+  });
+  const solo = gl.spec("reviews", "7", "--unipersonal");
+  assert.equal(solo.status, 0, solo.stderr);
+  // Quien tiene un hilo sin resolver pide cambios, también quien creó el merge request.
+  assert.match(solo.stdout, /## ada \(CHANGES_REQUESTED\)\n2026-11-06: Nota pendiente/);
+  assert.match(solo.stdout, /- ada src\/a\.js:3: Cambia esto/);
+  assert.doesNotMatch(solo.stdout, /Nota atendida|Resuelto|Piden cambios/);
+  const team = gl.spec("reviews", "7");
+  assert.equal(team.status, 0, team.stderr);
+  assert.doesNotMatch(team.stdout, /Nota pendiente|Cambia esto/);
+});
+
 test("issue-spec reviews resume la revisión del merge request que cierra la issue", () => {
   const summary = { notes: [{ author: BOB, body: "Faltan tests", system: false, resolvable: false }] };
   const gl = project({ mergeRequests: { 1: mergeRequest({ reviewers: [{ ...BOB, state: "REQUESTED_CHANGES" }], discussions: [summary, thread(CAM), thread(CAM, true, "Resuelto")] }) } });
