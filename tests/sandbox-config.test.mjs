@@ -52,6 +52,14 @@ function checkCodex(base) {
   assert.deepEqual(findKeys(c, FORBIDDEN_KEYS), [], "claves prohibidas en la config de Codex");
 }
 
+// La rama local staging y, si no existe (como en el CI), origin/staging.
+function stagingRef() {
+  const ref = ["refs/heads/staging", "refs/remotes/origin/staging"]
+    .find((r) => spawnSync("git", ["rev-parse", "--verify", "--quiet", `${r}^{commit}`], { cwd: root }).status === 0);
+  assert.ok(ref, "no hay ref base para comparar: no existe la rama local staging ni origin/staging (tráela con `git fetch origin staging`)");
+  return ref;
+}
+
 const readJson = (base, rel) => JSON.parse(readFileSync(join(base, rel), "utf8"));
 
 function checkClaude(base) {
@@ -74,6 +82,11 @@ test("claude allowedDomains", () => {
 
 test("cursor networkPolicy", () => {
   checkCursor(root);
+});
+
+test("mcp de .mcp.json igual que staging", () => {
+  const diff = spawnSync("git", ["diff", "--exit-code", stagingRef(), "--", ...MCP_FILES], { cwd: root, encoding: "utf8" });
+  assert.equal(diff.status, 0, `hay diferencias con staging:\n${diff.stdout}${diff.stderr}`);
 });
 
 test("codex perfil github-net", { skip: tomlSkip }, () => {
