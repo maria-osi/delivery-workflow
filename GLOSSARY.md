@@ -21,16 +21,28 @@ Momento en que una parte del trabajo queda en un commit y en el remoto, a petici
 Momento en que la pull request recibe revisores y sale de draft.
 
 **Cambios pedidos**:
-Momento en que la pull request abierta tiene `CHANGES_REQUESTED`. Spec, plan y tasks van en un comentario de la issue y se repite el ciclo.
+Momento en que la pull request abierta tiene `CHANGES_REQUESTED`. En GitLab basta un hilo sin resolver de alguien distinto del autor. Spec, plan y tasks van en un comentario de la issue y se repite el ciclo.
 
 **Revisión** (comentario):
 El comentario de la issue que empieza por `<!-- Revisión N -->` y lleva las plantillas de spec, plan y tasks de lo que pidió la persona revisora.
 
+**Cuenta aceptada**:
+La cuenta cuyo texto `issue-spec` entrega a los agentes desde la revisión. Cuáles son lo dice la skill [`issue-spec`](.apm/skills/issue-spec/SKILL.md).
+
 **Otra pasada**:
-Momento en que la persona confirma que el ciclo vuelve a empezar después de que la novena ronda falle.
+Momento en que la persona confirma que el ciclo vuelve a empezar después de que falle la novena ronda o su cierre.
 
 **Solo git**:
 La forma de dejar la tarea escrita que para con la pull request en draft enlazada, sin ciclo, para trabajar a mano.
+
+## Forge
+
+**Forge**:
+El servicio donde viven las issues y las pull requests del proyecto: GitHub o GitLab.
+_Evitar_: proveedor, plataforma
+
+**Merge request**:
+El nombre que GitLab da a la pull request. El flujo dice pull request para los dos forges.
 
 ## Tarea
 
@@ -43,7 +55,7 @@ La clase de la tarea: `feat`, `fix`, `docs`, `refactor`, `test`, `chore` o `know
 _Evitar_: categoría
 
 **Etiqueta**:
-La marca de GitHub que lleva el nombre exacto del tipo, en la issue y en la pull request.
+La marca del forge que lleva el nombre exacto del tipo, en la issue y en la pull request.
 _Evitar_: label (en español), tag
 
 **Spec**:
@@ -69,19 +81,25 @@ _Evitar_: consulta jurídica, dictamen
 ## Ciclo
 
 **Ciclo**:
-La sucesión de rondas que convierte la spec en código comprobado. Lo abre `concept-developer` y termina cuando una ronda pasa o la novena falla.
+La sucesión de rondas y cierres que convierte la spec en código comprobado. Lo abre `concept-developer` y termina cuando un cierre pasa sin tasks pendientes o falla la novena ronda o su cierre.
 _Evitar_: bucle, pipeline
 
 **Ronda**:
-Una vuelta del ciclo: una task de código, sus tests y la comprobación de la documentación. Hay nueve como máximo.
+Una vuelta del ciclo: una task de código y sus tests. Hay nueve como máximo.
 _Evitar_: iteración, intento
 
 **Pasada**:
 Un ciclo completo de hasta nueve rondas. Una pasada nueva solo empieza con la confirmación de la persona.
 _Evitar_: ejecución, run
 
+**Bloque**:
+Las tasks de código de la issue, que se comprueban juntas contra la documentación.
+
+**Cierre del bloque**:
+Lo que sigue a la última task de código: `concept-developer` actualiza la documentación pendiente y `concept-tester` comprueba el bloque. Las observaciones de redacción se corrigen y se vuelven a comprobar una vez. No gasta ronda.
+
 **Veredicto**:
-Lo que concluye un tester en una ronda: pasa o falla, con las comprobaciones que fallaron.
+Lo que concluye un tester: pasa o falla, con las comprobaciones que fallaron. `concept-tester` puede concluir que pasa con observaciones de redacción.
 _Evitar_: resultado
 
 ## Piezas
