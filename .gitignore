@@ -12,7 +12,6 @@ apm.lock.yaml
 .claude/skills/
 .cursor/agents/
 .cursor/mcp.json
-.mcp.json
 
 .DS_Store
 __pycache__/
