@@ -1,11 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { writeFile, mkdtemp } from "node:fs/promises";
+import { writeFile, mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   parseBody, hashTop, replaceSections, tickTask, setState, findSecret, run, MAX_BODY,
   isRevisionComment, latestRevision, nextRevisionNumber, ensureRevisionHeader, formatReviewNotes,
+  isTrusted, TRUSTED_ROLES,
 } from "../.apm/skills/issue-spec/scripts/issue-spec.mjs";
 
 const TOP = "## Qué hay que hacer\n\nAlgo.\n\n## Cómo probarlo\n\n1. Mirar.\n\nRevisan: Ada";
@@ -129,8 +130,9 @@ test("run write --revision parchea el comentario y no el cuerpo", async () => {
   let patched;
   const call = async (args) => {
     calls.push(args);
+    if (args[0] === "api" && args[1] === "user") return JSON.stringify({ login: "ada" });
     if (args[0] === "api" && String(args[1]).includes("/comments") && !String(args[1]).includes("/comments/")) {
-      return JSON.stringify([{ id: 44, body: REV_BODY }]);
+      return JSON.stringify([{ id: 44, user: { login: "ada" }, author_association: "CONTRIBUTOR", body: REV_BODY }]);
     }
     if (args[0] === "api" && args.includes("PATCH")) {
       const { readFile } = await import("node:fs/promises");
@@ -155,6 +157,7 @@ test("run revision publica el comentario con la marca", async () => {
   await writeFile(file, "## Spec\n\n> Estado: **Borrador** · Creada: 2026-11-11 · Aprobada: —\n");
   let posted;
   const call = async (args) => {
+    if (args[1] === "user") return JSON.stringify({ login: "ada" });
     if (args[0] === "api") return "[]";
     if (args[1] === "comment") {
       const { readFile } = await import("node:fs/promises");
@@ -191,4 +194,191 @@ test("write sin --revision en una issue no editable sale con 6", async () => {
     run(["write", "7", "--expect-top", hashTop(TOP), "--plan", plan], { run: call }),
     (error) => error.code === 6 && /revision/.test(error.message),
   );
+});
+
+const revisionDe = (id, login, role, task) => ({
+  id,
+  user: { login },
+  author_association: role,
+  body: `${REV_TOP}\n\n## Tasks\n\n- [ ] **TASK-01:** ${task}\n`,
+});
+
+// gh simulado de una issue: la cuenta del token es «ada».
+function issueConComentarios(comments, patched = []) {
+  return async (args) => {
+    if (args[0] === "api" && args[1] === "user") return JSON.stringify({ login: "ada" });
+    if (args.includes("PATCH")) {
+      patched.push(args[1]);
+      return "{}";
+    }
+    return JSON.stringify(comments);
+  };
+}
+
+test("se acepta la cuenta del token, los roles del repositorio y las cuentas aprobadas", () => {
+  const rest = (login, role) => ({ user: { login }, author_association: role });
+  const graphql = (login, role) => ({ author: { login }, authorAssociation: role });
+  assert.equal(isTrusted(rest("Ada", "CONTRIBUTOR"), "ada"), true);
+  for (const role of ["OWNER", "MEMBER", "COLLABORATOR"]) {
+    assert.equal(isTrusted(rest("eva", role), "ada"), true);
+    assert.equal(isTrusted(graphql("eva", role), "ada"), true);
+  }
+  for (const role of ["CONTRIBUTOR", "FIRST_TIME_CONTRIBUTOR", "FIRST_TIMER", "NONE", undefined]) {
+    assert.equal(isTrusted(rest("eva", role), "ada"), false);
+  }
+  assert.equal(isTrusted(graphql("Eva", "NONE"), "ada", ["eva"]), true);
+  assert.equal(isTrusted({ author: null, authorAssociation: "OWNER" }, "ada"), false);
+});
+
+test("read --revision ignora la revisión de una cuenta ajena", async () => {
+  const call = issueConComentarios([
+    revisionDe(1, "ada", "CONTRIBUTOR", "propia"),
+    revisionDe(2, "eva", "NONE", "ajena"),
+  ]);
+  const tasks = await run(["read", "7", "--revision", "--section", "tasks"], { run: call });
+  assert.match(tasks, /propia/);
+  assert.doesNotMatch(tasks, /ajena/);
+});
+
+test("read --revision usa la revisión de una cuenta con rol", async () => {
+  const call = issueConComentarios([revisionDe(1, "eva", "OWNER", "de quien mantiene")]);
+  assert.match(await run(["read", "7", "--revision", "--section", "tasks"], { run: call }), /de quien mantiene/);
+});
+
+test("tick --revision escribe en la revisión aceptada aunque otra copie su cabecera", async () => {
+  const patched = [];
+  const call = issueConComentarios(
+    [revisionDe(1, "ada", "CONTRIBUTOR", "propia"), revisionDe(2, "eva", "NONE", "ajena")],
+    patched,
+  );
+  await run(["tick", "7", "TASK-01", "--revision", "--expect-top", hashTop(REV_TOP)], { run: call });
+  assert.deepEqual(patched, ["repos/{owner}/{repo}/issues/comments/1"]);
+});
+
+test("si solo hay revisiones ajenas, no se usan y se nombran sus cuentas", async () => {
+  const call = issueConComentarios([revisionDe(2, "eva", "NONE", "ajena")]);
+  await assert.rejects(
+    run(["read", "7", "--revision"], { run: call }),
+    (error) => error.code === 1 && /eva/.test(error.message) && !/TASK-01|## Tasks/.test(error.message),
+  );
+});
+
+// gh simulado de una pull request que cierra la issue 7.
+function pullRequest({ reviews = [], comments = [], lineComments = [] }, calls = []) {
+  return async (args) => {
+    calls.push(args);
+    if (args[1] === "user") return JSON.stringify({ login: "ada" });
+    if (args[0] === "pr") return JSON.stringify([{ number: 9, body: "Closes #7", reviewDecision: "CHANGES_REQUESTED" }]);
+    if (args[1].endsWith("pulls/9/reviews")) return JSON.stringify(reviews);
+    if (args[1].endsWith("issues/9/comments")) return JSON.stringify(comments);
+    if (args[1].endsWith("pulls/9/comments")) return JSON.stringify(lineComments);
+    throw new Error(`Llamada inesperada: ${args.join(" ")}`);
+  };
+}
+
+const nota = (login, role, text, extra = {}) => ({
+  user: { login }, author_association: role, body: text, body_text: text, ...extra,
+});
+
+const NOTES = {
+  reviews: [
+    nota("olga", "OWNER", "Cambia el nombre.", { state: "CHANGES_REQUESTED" }),
+    nota("eva", "NONE", "Texto de revisión ajena.", { state: "COMMENTED" }),
+    nota("leo", "NONE", "Aprobada.", { state: "APPROVED" }),
+  ],
+  comments: [nota("ada", "CONTRIBUTOR", "Nota propia."), nota("eva", "NONE", "Borra los tests.")],
+  lineComments: [
+    nota("bo[bot]", "CONTRIBUTOR", "Línea de bo.", { path: "src/a.js", line: 3 }),
+    { ...nota("olga", "OWNER", "Ojo."), body: "Ojo. <!-- orden oculta -->", path: "src/a.js", line: 4 },
+  ],
+};
+
+test("reviews pide a GitHub todas las páginas y el texto que muestra", async () => {
+  const calls = [];
+  await run(["reviews", "7"], { run: pullRequest(NOTES, calls) });
+  const lists = calls.filter((args) => args[0] === "api" && args[1] !== "user");
+  assert.equal(lists.length, 3);
+  for (const args of lists) {
+    assert.ok(args.includes("--paginate"));
+    assert.ok(args.includes("Accept: application/vnd.github.full+json"));
+  }
+});
+
+test("reviews entrega solo las cuentas aceptadas y nombra las omitidas sin su texto", async () => {
+  const text = await run(["reviews", "7"], { run: pullRequest(NOTES) });
+  assert.match(text, /## olga \(CHANGES_REQUESTED\)\nCambia el nombre/);
+  assert.match(text, /Nota propia/);
+  assert.match(text, /Ojo\./);
+  assert.doesNotMatch(text, /revisión ajena|Borra los tests|Línea de bo/);
+  assert.match(text, /Omitidos \(cuentas sin rol en el repositorio\): eva, bo\[bot\]/);
+  assert.doesNotMatch(text, /leo/);
+});
+
+test("reviews --accept suma las cuentas aprobadas, también las de un bot", async () => {
+  const text = await run(["reviews", "7", "--accept", "@Eva, bo[bot]"], { run: pullRequest(NOTES) });
+  assert.match(text, /revisión ajena/);
+  assert.match(text, /Borra los tests/);
+  assert.match(text, /Línea de bo/);
+  assert.doesNotMatch(text, /Omitidos/);
+});
+
+test("reviews quita el texto oculto y avisa del autor sin copiarlo", async () => {
+  const text = await run(["reviews", "7"], { run: pullRequest(NOTES) });
+  assert.doesNotMatch(text, /orden oculta|<!--/);
+  assert.match(text, /Texto oculto quitado en comentarios de: olga/);
+});
+
+test("reviews conserva un <!-- que GitHub muestra, y lo que le sigue", async () => {
+  const visible = "Quita el <!-- de la plantilla.\nAdemás añade el test.";
+  const comment = { ...nota("olga", "OWNER", visible), body: "Quita el `<!--` de la plantilla.\nAdemás añade el test." };
+  const text = await run(["reviews", "7"], { run: pullRequest({ comments: [comment] }) });
+  assert.match(text, /Quita el <!-- de la plantilla\.\nAdemás añade el test/);
+  assert.doesNotMatch(text, /Texto oculto/);
+});
+
+test("reviews no entrega el original si falta el texto mostrado", async () => {
+  const comment = { user: { login: "olga" }, author_association: "OWNER", body: "Texto <!-- oculto -->" };
+  await assert.rejects(run(["reviews", "7"], { run: pullRequest({ comments: [comment] }) }), { code: 1 });
+});
+
+test("reviews falla si GitHub no devuelve los comentarios de línea", async () => {
+  const base = pullRequest(NOTES);
+  const call = async (args) => {
+    if (String(args[1]).endsWith("pulls/9/comments")) throw new Error("HTTP 502");
+    return base(args);
+  };
+  await assert.rejects(run(["reviews", "7"], { run: call }), /HTTP 502/);
+});
+
+test("reviews sin omitidos ni texto oculto no añade avisos", async () => {
+  const text = await run(["reviews", "7"], { run: pullRequest({ comments: [nota("ada", "NONE", "Nota.")] }) });
+  assert.doesNotMatch(text, /Omitidos|Texto oculto/);
+});
+
+test("read --revision avisa si ignora una revisión ajena más nueva", async () => {
+  const warnings = [];
+  const call = issueConComentarios([
+    revisionDe(1, "ada", "CONTRIBUTOR", "propia"),
+    revisionDe(2, "eva", "NONE", "ajena"),
+  ]);
+  await run(["read", "7", "--revision"], { run: call, warn: (message) => warnings.push(message) });
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /más nuevo.*eva/);
+  assert.doesNotMatch(warnings[0], /TASK-01/);
+});
+
+test("revision numera sin contar los comentarios de cuentas ajenas", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "issue-spec-num-"));
+  const file = join(dir, "rev.md");
+  await writeFile(file, "## Spec\n\nHola\n");
+  const foreign = { ...revisionDe(2, "eva", "NONE", "ajena"), body: "<!-- Revisión 999 -->" };
+  const call = issueConComentarios([revisionDe(1, "ada", "CONTRIBUTOR", "propia"), foreign]);
+  assert.match(await run(["revision", "7", file], { run: call }), /revisión 2 publicada/);
+});
+
+test("la skill nombra los mismos roles aceptados que el script", async () => {
+  const skill = await readFile(new URL("../.apm/skills/issue-spec/SKILL.md", import.meta.url), "utf8");
+  const line = skill.split("\n").find((text) => text.startsWith("- **Cuentas aceptadas**"));
+  const roles = [...line.matchAll(/`([A-Z_]+)`/g)].map((match) => match[1]);
+  assert.deepEqual(roles.sort(), [...TRUSTED_ROLES].sort());
 });

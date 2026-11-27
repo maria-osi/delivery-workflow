@@ -171,18 +171,211 @@ test('set conserva el comentario y rechaza ref, ausencia y duplicado sin escribi
   assert.equal(readFileSync(duplicate, 'utf8'), beforeDuplicate);
 });
 
-test('pin lee la entrada actual y el workflow no actualiza si ya coincide', () => {
+test('latest elige la release estable más alta sin mirar el manifiesto', () => {
+  const releases = JSON.stringify([
+    { tag_name: 'v1.2.3', draft: false, prerelease: false },
+    { tag_name: 'v1.3.0', draft: false, prerelease: false },
+    { tag_name: 'v1.4.0', draft: false, prerelease: false },
+  ]);
+  const newest = run(['latest'], releases);
+  assert.equal(newest.status, 0);
+  assert.equal(newest.stdout, 'v1.4.0\n');
+
+  const onlySelfPinned = JSON.stringify([
+    { tag_name: 'v1.4.0', draft: false, prerelease: false },
+    { tag_name: 'v1.3.0', draft: false, prerelease: false },
+    { tag_name: 'v1.2.3', draft: false, prerelease: false },
+  ]);
+  const stillNewest = run(['latest'], onlySelfPinned);
+  assert.equal(stillNewest.status, 0);
+  assert.equal(stillNewest.stdout, 'v1.4.0\n');
+});
+
+test('select y latest difieren cuando las releases nuevas traen autodependencia', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'self-release-latest-vs-select-'));
+  writeFileSync(join(dir, 'v1.4.0.yml'), manifest);
+  writeFileSync(join(dir, 'v1.3.0.yml'), manifest);
+  writeFileSync(join(dir, 'v1.2.3.yml'), withoutSelf);
+  const releases = JSON.stringify([
+    { tag_name: 'v1.2.3', draft: false, prerelease: false },
+    { tag_name: 'v1.3.0', draft: false, prerelease: false },
+    { tag_name: 'v1.4.0', draft: false, prerelease: false },
+  ]);
+  const newest = run(['latest'], releases);
+  assert.equal(newest.stdout, 'v1.4.0\n');
+  const installable = run(['select', '--manifests', dir, repo], releases);
+  assert.equal(installable.stdout, 'v1.2.3\n');
+});
+
+test('nested lee el pin del manifiesto de la release', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'self-release-nested-'));
+  writeFileSync(join(dir, 'v1.4.1.yml'), manifest);
+  writeFileSync(join(dir, 'v1.2.3.yml'), withoutSelf);
+
+  const nested = run(['nested', '--manifests', dir, repo, 'v1.4.1']);
+  assert.equal(nested.status, 0);
+  assert.equal(nested.stdout, 'venturars/delivery-workflow#v1.1.2\n');
+
+  const none = run(['nested', '--manifests', dir, repo, 'v1.2.3']);
+  assert.equal(none.status, 0);
+  assert.equal(none.stdout, '');
+
+  const invalid = run(['nested', '--manifests', dir, repo, 'staging']);
+  assert.notEqual(invalid.status, 0);
+});
+
+test('pin lee la entrada actual', () => {
   const dir = mkdtempSync(join(tmpdir(), 'self-release-pin-'));
   const file = join(dir, 'apm.yml');
   writeFileSync(file, manifest);
   const pin = run(['pin', '--file', file, repo]);
   assert.equal(pin.status, 0);
   assert.equal(pin.stdout, 'venturars/delivery-workflow#v1.1.2\n');
+});
 
-  const workflow = readFileSync(new URL('../.github/workflows/update-apm-dependency.yml', import.meta.url), 'utf8');
-  assert.match(workflow, /self-release\.py select "\$DEPENDENCY_REPO"/);
-  assert.match(workflow, /steps\.compatible\.outputs\.ref/);
-  assert.match(workflow, /dependencies\.apm ya apunta a \$\{REF\}/);
-  assert.match(workflow, /self-release\.py set "\$DEPENDENCY_REPO" "\$REF"/);
-  assert.doesNotMatch(workflow, /steps\.release\.outputs\.ref/);
+test('el release quita la autodependencia y etiqueta ese commit, no main', () => {
+  const workflow = readFileSync(
+    new URL('../.github/workflows/release-create-version.yml', import.meta.url),
+    'utf8',
+  );
+  assert.match(workflow, /self-release\.py align --check "\$REPO"/);
+  assert.match(workflow, /self-release\.py align "\$REPO"/);
+  assert.match(workflow, /git tag "\$NEXT" "\$TARGET"/);
+  assert.match(workflow, /git push origin "refs\/tags\/\$NEXT"/);
+  assert.match(workflow, /steps\.align\.outputs\.sha/);
+  assert.doesNotMatch(workflow, /git push origin "HEAD:/);
+  assert.doesNotMatch(workflow, /--target "\$GITHUB_SHA"/);
+});
+
+function writePair(oldText, newText) {
+  const dir = mkdtempSync(join(tmpdir(), 'self-release-empty-'));
+  const oldFile = join(dir, 'old.yml');
+  const newFile = join(dir, 'new.yml');
+  writeFileSync(oldFile, oldText);
+  writeFileSync(newFile, newText);
+  return { oldFile, newFile };
+}
+
+test('set-version escribe X.Y.Z sin la v', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'self-release-set-version-'));
+  const file = join(dir, 'apm.yml');
+  writeFileSync(file, `name: delivery-workflow
+version: "1.2.3" # pin
+dependencies:
+  mcp:
+    - name: eur-lex
+`);
+  const written = run(['set-version', '1.4.3', '--file', file]);
+  assert.equal(written.status, 0);
+  assert.equal(
+    readFileSync(file, 'utf8'),
+    `name: delivery-workflow
+version: "1.4.3" # pin
+dependencies:
+  mcp:
+    - name: eur-lex
+`,
+  );
+
+  const withV = run(['set-version', 'v1.4.3', '--file', file]);
+  assert.notEqual(withV.status, 0);
+  assert.match(withV.stderr, /X\.Y\.Z, sin v/);
+  assert.match(readFileSync(file, 'utf8'), /^version: "1\.4\.3" # pin$/m);
+});
+
+test('set-version sin línea version no escribe', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'self-release-set-version-missing-'));
+  const file = join(dir, 'apm.yml');
+  writeFileSync(file, 'name: delivery-workflow\n');
+  const before = readFileSync(file, 'utf8');
+  const missing = run(['set-version', '1.4.3', '--file', file]);
+  assert.notEqual(missing.status, 0);
+  assert.match(missing.stderr, /no contiene version/);
+  assert.equal(readFileSync(file, 'utf8'), before);
+});
+
+test('changeset vacío con version', () => {
+  const { oldFile, newFile } = writePair(withoutSelf, withoutSelf.replace('1.1.2', '1.4.3'));
+  const result = run(['empty-changeset', repo, oldFile, newFile, 'apm.yml']);
+  assert.equal(result.status, 0);
+  assert.equal(result.stdout, 'si\n');
+});
+
+test('changeset vacío con limpieza', () => {
+  const cleaned = withoutSelf.replace('1.1.2', '1.1.5');
+  const { oldFile, newFile } = writePair(manifest, cleaned);
+  const result = run(['empty-changeset', repo, oldFile, newFile, 'apm.yml']);
+  assert.equal(result.status, 0);
+  assert.equal(result.stdout, 'si\n');
+});
+
+test('changeset vacío con version y limpieza', () => {
+  const { oldFile, newFile } = writePair(manifest, withoutSelf.replace('1.1.2', '1.4.3'));
+  const result = run(['empty-changeset', repo, oldFile, newFile, 'apm.yml']);
+  assert.equal(result.status, 0);
+  assert.equal(result.stdout, 'si\n');
+});
+
+test('changeset no vacío con otro fichero', () => {
+  const { oldFile, newFile } = writePair(withoutSelf, withoutSelf.replace('1.1.2', '1.4.3'));
+  const result = run(['empty-changeset', repo, oldFile, newFile, 'apm.yml', 'README.md']);
+  assert.equal(result.status, 0);
+  assert.equal(result.stdout, 'no\n');
+});
+
+test('changeset no vacío con otra clave de apm.yml', () => {
+  const otherKey = withoutSelf.replace(
+    'name: delivery-workflow',
+    'name: delivery-workflow\ndescription: otro',
+  );
+  const { oldFile, newFile } = writePair(withoutSelf, otherKey);
+  const result = run(['empty-changeset', repo, oldFile, newFile, 'apm.yml']);
+  assert.equal(result.status, 0);
+  assert.equal(result.stdout, 'no\n');
+});
+
+test('apm.lock.yaml no está en el índice', () => {
+  const listed = spawnSync('git', ['ls-files', 'apm.lock.yaml'], {
+    cwd: fileURLToPath(new URL('..', import.meta.url)),
+    encoding: 'utf8',
+  });
+  assert.equal(listed.status, 0);
+  assert.equal(listed.stdout, '');
+  const gitignore = readFileSync(new URL('../.gitignore', import.meta.url), 'utf8');
+  assert.match(gitignore, /^apm.lock.yaml$/m);
+});
+
+test('el workflow actualiza staging con set-version, align y push', () => {
+  const workflow = readFileSync(
+    new URL('../.github/workflows/release-create-version.yml', import.meta.url),
+    'utf8',
+  );
+  assert.match(workflow, /git fetch origin staging/);
+  assert.match(workflow, /git checkout staging/);
+  assert.match(workflow, /self-release\.py set-version "\$\{NEXT#v\}"/);
+  assert.match(workflow, /Actualizar version en staging[\s\S]*self-release\.py align "\$REPO"/);
+  assert.match(workflow, /git push origin staging/);
+  assert.match(workflow, /git diff --quiet && git diff --cached --quiet/);
+  assert.match(workflow, /contents: write/);
+  assert.doesNotMatch(workflow, /pull-requests: write/);
+  assert.doesNotMatch(workflow, /gh pr create/);
+});
+
+test('el workflow salta la etiqueta si el changeset es vacío', () => {
+  const workflow = readFileSync(
+    new URL('../.github/workflows/release-create-version.yml', import.meta.url),
+    'utf8',
+  );
+  assert.match(workflow, /if \[ -n "\$LAST_TAG" \]; then/);
+  assert.match(workflow, /self-release\.py empty-changeset "\$REPO"/);
+  assert.match(workflow, /if \[ "\$vacio" = si \]; then/);
+  assert.match(workflow, /echo "saltar=si" >> "\$GITHUB_OUTPUT"/);
+  assert.match(
+    workflow,
+    /name: Decidir el tipo de cambio\n(?:.*\n)*?        if: steps\.ultima\.outputs\.saltar != 'si'/,
+  );
+  assert.match(
+    workflow,
+    /name: Actualizar version en staging\n        if: steps\.ultima\.outputs\.saltar != 'si'/,
+  );
 });

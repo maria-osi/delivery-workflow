@@ -26,6 +26,9 @@ Momento en que la pull request abierta tiene `CHANGES_REQUESTED`. Spec, plan y t
 **Revisión** (comentario):
 El comentario de la issue que empieza por `<!-- Revisión N -->` y lleva las plantillas de spec, plan y tasks de lo que pidió la persona revisora.
 
+**Cuenta aceptada**:
+La cuenta cuyo texto `issue-spec` entrega a los agentes desde la revisión. Cuáles son lo dice la skill [`issue-spec`](.apm/skills/issue-spec/SKILL.md).
+
 **Otra pasada**:
 Momento en que la persona confirma que el ciclo vuelve a empezar después de que la novena ronda falle.
 
@@ -117,6 +120,12 @@ _Evitar_: ronda (es del ciclo)
 **Documentos que mandan**:
 Los ficheros de documentación del proyecto que el cambio tiene que obedecer y contra los que se compara el código.
 _Evitar_: referencias, fuentes
+
+**Mapa de capas**:
+El fichero `docs/ARCHITECTURE.md` del proyecto, que dice dónde va cada capa y qué reglas de fronteras comprueba.
+
+**Verificación de fronteras**:
+La comprobación automática de que los imports respetan las capas del mapa. La herramienta y el comando los elige cada proyecto y se anotan en `docs/ARCHITECTURE.md`.
 
 **Say it straight**:
 Skill del paquete que fija la prosa en español de issues, spec, PRs y docs: declarativa, sin relleno defensivo. No rige commits ni el chat del orquestador. **Fuera de esto** en una issue es alcance, no disclaimer.

@@ -193,6 +193,29 @@ check "check-status dice la cuenta del token" grep -q "^GitHub CLI: cuenta ada" 
 check "check-status informa de Node" grep -q "^Node:" <<<"$status"
 check "check-status informa de la pull request" grep -q "^Pull request: #9 CHANGES_REQUESTED issue #1" <<<"$status"
 
+# check-status: pide Node 24. El node falso solo responde la versión.
+mkdir -p "${work}/fake-node"
+cat >"${work}/fake-node/node" <<'NODE'
+#!/usr/bin/env bash
+[[ "$1" == -p ]] && echo "$FAKE_NODE_VERSION" && exit 0
+exit 1
+NODE
+chmod +x "${work}/fake-node/node"
+status=$(PATH="${work}/fake-node:${PATH}" FAKE_NODE_VERSION=23.7.0 "${skills}/check-status/scripts/check-status.sh")
+check "check-status pide Node 24 con una versión anterior" grep -qx "Node: 23.7.0. Hace falta Node 24 o superior." <<<"$status"
+status=$(PATH="${work}/fake-node:${PATH}" FAKE_NODE_VERSION=24.0.0 "${skills}/check-status/scripts/check-status.sh")
+check "check-status acepta Node 24" grep -qx "Node: 24.0.0" <<<"$status"
+# Un PATH solo con lo que el script necesita: así no depende de dónde esté instalado node.
+mkdir -p "${work}/no-node"
+for tool in basename bash cat dirname env git grep mktemp rm sed tail; do
+  ln -s "$(command -v "$tool")" "${work}/no-node/${tool}"
+done
+status=$(PATH="${work}/bin:${work}/no-node" "${skills}/check-status/scripts/check-status.sh" 2>&1)
+check "check-status sin Node lo dice" grep -qx "Node: no instalado. Hace falta Node 24 o superior." <<<"$status"
+check "check-status sin Node dice que no comprueba la pull request" grep -qx "Pull request: no se pudo comprobar (falta Node)" <<<"$status"
+check "check-status sin Node llega al final" grep -q "^Sin seguimiento:" <<<"$status"
+status=$("${skills}/check-status/scripts/check-status.sh")
+
 # check-status: la línea de modelos nunca para el script y pasa por sus tres estados.
 check "check-status avisa de que no hay agentes de Cursor" grep -q "^Modelos: sin configurar" <<<"$status"
 mkdir -p .cursor/agents
@@ -381,6 +404,16 @@ for agent in concept-developer concept-tester; do
 done
 check "delivery-workflow nombra legal-advisor en herramientas" grep -qF '**Subagente `legal-advisor`:**' "$dw"
 
+# setup-discord-notifications: skill instalable y apagada por defecto.
+sd="${skills}/setup-discord-notifications"
+check "setup-discord-notifications declara su name" grep -qx "name: setup-discord-notifications" "${sd}/SKILL.md"
+check "setup-discord-notifications trae una description en español" bash -c "$(declare -f frontmatter); frontmatter '${sd}/SKILL.md' | grep -qE '^description: .*(Activa|Úsala)'"
+check "setup-discord-notifications nombra detect" grep -q 'detect' "${sd}/SKILL.md"
+check "setup-discord-notifications trae el script y las tres plantillas de workflows" bash -c "test -f '${sd}/scripts/setup-discord-notifications.mjs' && for w in discord-pr-trigger discord-pr-confirmation-trigger discord-pr-publish; do test -f '${sd}/assets/workflows/'\$w.yml || exit 1; done"
+check "setup-discord-notifications trae la copia de la acción" test -f "${sd}/assets/discord-pr-notifications/action.yml"
+check "apm.yml no declara workflows ni Discord: instalar no activa nada" bash -c "! grep -qiE 'discord|workflows' '${package}/apm.yml'"
+check "detect no escribe en el proyecto" bash -c "d=\$(mktemp -d) && git -C \$d init -q && git -C \$d remote add origin https://github.com/acme/app.git && node '${sd}/scripts/setup-discord-notifications.mjs' detect --root \$d >/dev/null 2>&1; [[ -z \$(find \$d -mindepth 1 -not -path '*/.git' -not -path '*/.git/*') ]]"
+
 # setup-compliance: skill instalable con sus plantillas.
 sc="${skills}/setup-compliance"
 check "setup-compliance declara su name" grep -qx "name: setup-compliance" "${sc}/SKILL.md"
@@ -400,6 +433,81 @@ check "el anexo III del Reglamento de IA está guardado con su CELEX" bash -c "g
 check "el paso 1 recorre las letras a) a h) del art. 5.1 con sus excepciones" bash -c "step=\$(sed -n '/^### 1\\. Prácticas/,/^### 2\\./p' '${sc}/assets/ai-act-classification.md'); for l in a b c d e f g h; do grep -qF -- \"- **\$l)**\" <<<\"\$step\" || exit 1; done; grep -qF 'motivos médicos o de seguridad' <<<\"\$step\" && grep -qF 'hechos objetivos y verificables' <<<\"\$step\""
 check "el paso 4 recorre las condiciones a) a d) del art. 6.3 y el registro del 6.4" bash -c "step=\$(sed -n '/^### 4\\. Excepciones/,/^### 5\\./p' '${sc}/assets/ai-act-classification.md'); for l in a b c d; do grep -qF -- \"- **\$l)**\" <<<\"\$step\" || exit 1; done; grep -qF 'art. 49.2' <<<\"\$step\" && grep -qF 'puesta en servicio' <<<\"\$step\" || grep -qF 'ponerlo en servicio' <<<\"\$step\""
 check "el paso del art. 50 no se salta en alto riesgo" bash -c "grep -qF 'El paso 5 se evalúa además' '${sc}/assets/ai-act-classification.md' && ! grep -qF 'pasos en este orden y para en el primero' '${sc}/assets/ai-act-classification.md'"
+
+# layered-architecture-guideline: skill, plantilla y precarga; sin verificador de un stack.
+lag="${skills}/layered-architecture-guideline"
+tpl="${lag}/assets/ARCHITECTURE.template.md"
+check "layered-architecture-guideline existe" test -f "${lag}/SKILL.md"
+for ref in errors flow-and-validation paradigm-and-signatures tests names-and-folders frameworks; do
+  check "layered-architecture-guideline trae references/${ref}.md" test -f "${lag}/references/${ref}.md"
+done
+check "layered-architecture-guideline trae assets/ARCHITECTURE.template.md" test -f "$tpl"
+check "layered-architecture-guideline trae assets/layered-architecture-guide.md" test -f "${lag}/assets/layered-architecture-guide.md"
+check "SKILL.md nombra la guía condensada como último recurso" grep -q 'layered-architecture-guide.md' "${lag}/SKILL.md"
+check "docs/research no duplica la guía de capas" bash -c "! test -e '${package}/docs/research/arquitectura-en-capas.md'"
+for agent in concept-developer code-developer; do
+  check "${agent} precarga layered-architecture-guideline" bash -c "$(declare -f frontmatter); frontmatter '${package}/.apm/agents/${agent}.agent.md' | grep -qx '  - layered-architecture-guideline'"
+done
+for agent in code-tester concept-tester; do
+  check "${agent} no precarga layered-architecture-guideline" bash -c "$(declare -f frontmatter); ! frontmatter '${package}/.apm/agents/${agent}.agent.md' | grep -q 'layered-architecture-guideline'"
+done
+check "la plantilla tiene Herramienta, Comando y R-EST-06 (DEF)" bash -c "grep -q 'Herramienta:' '$tpl' && grep -q 'Comando:' '$tpl' && grep -qF 'R-EST-06 (DEF)' '$tpl'"
+check "layered-architecture-guideline no trae scripts ni .cjs de un stack" bash -c "! test -e '${lag}/scripts/check-boundaries.sh' && ! test -e '${lag}/assets/boundaries.typescript.cjs'"
+check "SKILL.md no nombra lenguajes ni herramientas concretas" bash -c "! grep -qiE '\\b(rust|nest|php|ruby|spring|django|fastapi|golang|kotlin|python|typescript|javascript)\\b|node\\.js|\\bnpm\\b|dependency-cruiser|depcruise|import-linter|archunit|c#' '${lag}/SKILL.md'"
+check "ningún fichero versionado cita check-boundaries.sh ni boundaries.typescript.cjs" bash -c "! git -C '${package}' grep -l -E 'check-boundaries\\.sh|boundaries\\.typescript\\.cjs' -- ':!tests/scripts.test.sh'"
+check "la guía condensada define las mismas reglas y etiquetas que la skill" node -e '
+  const fs = require("fs");
+  const path = require("path");
+  const dir = process.argv[1];
+  const re = /\*\*(R-[A-Z]{3}-\d{2}) \((INV|DEF|CONV)\)\*\*/g;
+  const collect = (files) => {
+    const found = new Map();
+    const repeated = [];
+    for (const file of files) {
+      for (const [, id, tag] of fs.readFileSync(file, "utf8").matchAll(re)) {
+        if (found.has(id)) repeated.push(id);
+        else found.set(id, tag);
+      }
+    }
+    return { found, repeated };
+  };
+  const refs = fs.readdirSync(path.join(dir, "references")).filter((f) => f.endsWith(".md")).sort().map((f) => path.join(dir, "references", f));
+  const skill = collect([path.join(dir, "SKILL.md"), ...refs, path.join(dir, "assets", "ARCHITECTURE.template.md")]);
+  const guide = collect([path.join(dir, "assets", "layered-architecture-guide.md")]);
+  const problems = [];
+  const count = (tag) => [...skill.found.values()].filter((t) => t === tag).length;
+  if (count("INV") !== 39 || count("DEF") !== 26 || count("CONV") !== 25) problems.push(`cuentas ${count("INV")}/${count("DEF")}/${count("CONV")} (esperado 39/26/25)`);
+  if (skill.repeated.length) problems.push(`definidas dos veces en la skill: ${skill.repeated.join(", ")}`);
+  if (guide.repeated.length) problems.push(`definidas dos veces en la guía: ${guide.repeated.join(", ")}`);
+  for (const [id, tag] of skill.found) if (guide.found.get(id) !== tag) problems.push(`${id}: skill ${tag}, guía ${guide.found.get(id) ?? "ausente"}`);
+  for (const id of guide.found.keys()) if (!skill.found.has(id)) problems.push(`${id}: solo en la guía`);
+  if (problems.length) {
+    console.error(problems.join("\n"));
+    process.exit(1);
+  }
+' "$lag"
+check "la guía condensada repite el texto de las reglas de references" node -e '
+  const fs = require("fs");
+  const path = require("path");
+  const dir = process.argv[1];
+  const norm = (s) => s.replace(/\*\*|`|—/g, "").replace(/\s+/g, " ").trim();
+  const ruleLines = (file) => fs.readFileSync(file, "utf8").split("\n").filter((l) => /^- \*\*R-[A-Z]{3}-\d{2} \((?:INV|DEF|CONV)\)\*\*/.test(l)).map(norm);
+  const refDir = path.join(dir, "references");
+  const refLines = fs.readdirSync(refDir).filter((f) => f.endsWith(".md")).sort().flatMap((f) => ruleLines(path.join(refDir, f)).map((l) => [f, l]));
+  const guide = new Set(ruleLines(path.join(dir, "assets", "layered-architecture-guide.md")));
+  const diff = refLines.filter(([, l]) => !guide.has(l));
+  if (diff.length) {
+    console.error(diff.map(([f, l]) => `${f}: ${l.slice(0, 70)}…`).join("\n"));
+    process.exit(1);
+  }
+' "$lag"
+check "la plantilla contempla varias partes" grep -qF 'varias partes' "$tpl"
+cd_agent="${package}/.apm/agents/concept-developer.agent.md"
+check "concept-developer elige intensidad por módulo" bash -c 'grep -qF "Elige la intensidad de cada módulo según «Intensidad y variante» de layered-architecture-guideline: ligera si es un CRUD sin reglas de negocio, completa en cuanto hay una; si no está claro y no puedes preguntar, ligera y anotada." "$1" && grep -qF "Lo que no puedas decidir (framework, cómo se entregan los errores de dominio) queda como \`Por decidir\` y va a «Huecos»." "$1" && ! grep -qF "(intensidad, framework" "$1"' _ "$cd_agent"
+check "SKILL.md paso 2 imita forma y hueco sin intensidad" bash -c 'grep -qF "imita la forma de los vecinos, no sus incumplimientos" "$1" && grep -qF "Hueco: framework o fronteras." "$1" && ! grep -qF "Hueco: intensidad" "$1" && test "$(wc -w < "$1")" -le 1500' _ "${lag}/SKILL.md"
+check "plantilla anota intensidad por módulo" bash -c 'grep -qF "Una línea por módulo, ligera o completa según «Intensidad y variante»." "$1" && grep -qF "\`<módulo>\`: ligera | completa" "$1" && ! grep -qF "Intensidad: Por decidir" "$1"' _ "$tpl"
+check "R-AGT-03 imita forma no incumplimientos" bash -c 'grep -qE "^\- \*\*R-AGT-03 \(DEF\)\*\*.*Imita la forma, no los incumplimientos de reglas que tengan\." "$1" && test "$(grep -cE "^\- \*\*R-AGT-03 " "$1")" -eq 1' _ "${lag}/assets/layered-architecture-guide.md"
+check "grep intensidad sin hueco ni Por decidir" bash -c 'hits=$(git -C "$1" grep -n -i "intensidad" -- .apm) && test -n "$hits" && ! git -C "$1" grep -n -i -E "Intensidad:[[:space:]]*Por decidir|\(intensidad,[[:space:]]*framework|Hueco:[[:space:]]*intensidad" -- .apm' _ "$package"
 
 echo
 if [[ $failures -eq 0 ]]; then

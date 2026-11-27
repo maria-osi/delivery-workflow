@@ -30,7 +30,7 @@ El comentario es opcional. Si alguien no está en Discord o nadie confirma la re
 ## Requisitos
 
 - Un proyecto con git y un remoto `origin` en GitHub en el que puedas escribir.
-- [GitHub CLI](https://cli.github.com) (`gh`), Node 20 o superior y APM. `gh` no necesita sesión. El MCP de EUR-Lex necesita Node 24 o superior ([Protección de datos](#protección-de-datos)).
+- [GitHub CLI](https://cli.github.com) (`gh`), Node 24 o superior y APM. `gh` no necesita sesión. El MCP de EUR-Lex necesita Node 24 o superior ([Protección de datos](#protección-de-datos)).
 - **Un `.env` en la raíz del proyecto con tu token de GitHub**, y `.env` en `.gitignore`. Sin eso, el flujo no arranca.
 
 ## El token de GitHub
@@ -48,7 +48,11 @@ El flujo de entrega que ejecutan los agentes en GitHub (issues, pull requests, e
 
 Cada persona tiene su propio `.env` con su propio token. El `.env` se queda en tu equipo: no lo subas al repositorio. El push sigue usando tus credenciales de git.
 
+Hay dos usos distintos. **Otro proyecto** (aTempo, etc.) instala una etiqueta: sigue [Instalación en macOS y Linux](#instalación-en-macos-y-linux). **Este repositorio** es el paquete: no instales `venturars/delivery-workflow#v…` aquí; ve a [Trabajar en este repositorio](#trabajar-en-este-repositorio).
+
 ## Instalación en macOS y Linux
+
+Para un **proyecto consumidor**, no para editar delivery-workflow.
 
 1. Prepara el equipo, una sola vez:
 
@@ -56,13 +60,13 @@ Cada persona tiene su propio `.env` con su propio token. El `.env` se queda en t
    brew install gh node apm          # sin Homebrew: curl -sSL https://aka.ms/apm-unix | sh
    ```
 
-2. Instala el paquete desde la raíz del proyecto. En `--target` pon tu herramienta: `claude`, `cursor`, `codex` o varias separadas por comas.
+2. Instala el paquete desde la raíz **de ese proyecto**. En `--target` pon tu herramienta: `claude`, `cursor`, `codex` o varias separadas por comas.
 
    ```bash
-   apm install venturars/delivery-workflow#v0.1.0 --target claude
+   apm install venturars/delivery-workflow#v1.2.3 --target cursor
    ```
 
-   Mientras no exista `v0.1.0`, usa `#staging`.
+   Usa una etiqueta estable `vX.Y.Z`. `#staging` solo para probar lo que aún no se ha publicado.
 
 3. Haz commit de `apm.yml` y `apm.lock.yaml`.
 
@@ -129,6 +133,16 @@ bash .agents/skills/docker-best-practices/scripts/check-docker.sh Dockerfile
 
 En Claude Code, la carpeta es `.claude/skills/docker-best-practices/`.
 
+## Arquitectura en capas
+
+La skill `layered-architecture-guideline` fija cuatro capas (presentación, aplicación, dominio e infraestructura) más shared, las dependencias hacia dentro y los errores de dominio, con mínimos de seguridad para toda la arquitectura. Decide dónde va cada pieza y cómo se separa. Respeta la estructura que impone un framework.
+
+La usan `concept-developer` y `code-developer`. `code-tester` y `concept-tester` siguen el plan, no la precargan.
+
+Si falta `docs/ARCHITECTURE.md`, `concept-developer` lo crea desde la plantilla de la skill, elige la intensidad de cada módulo y deja `Por decidir` el framework y cómo se entregan los errores de dominio. Si existe, añade las secciones de la plantilla que falten y conserva lo que ya hay; no sustituye el fichero. Escribe en el plan el mapa archivo → capa. `code-developer` coloca el código en su capa.
+
+El mapa de capas es independiente del lenguaje. Cada proyecto elige y anota en `docs/ARCHITECTURE.md` la herramienta que verifica las fronteras; los agentes la proponen según el stack.
+
 ## Protección de datos
 
 La guía `data-protection-guideline` es un checklist del RGPD y la LOPDGDD que usan `concept-developer`, `concept-tester` y `legal-advisor`. Se activa con la sección `## Datos personales` de `docs/CONSTITUTION.md` del proyecto, señala posibles problemas de cada tarea con su artículo y no certifica cumplimiento.
@@ -152,7 +166,7 @@ Lo que `legal-advisor` no resuelve es un hueco y el orquestador te lo pregunta. 
 
 El MCP es `@cyanheads/eur-lex-mcp-server`, fijado a la versión 0.21.0, y corre en local con `npx`. No necesita clave. Viene con el paquete: `apm install` escribe el servidor `eur-lex` en `.mcp.json`, `.cursor/mcp.json` o `.codex/config.toml`, según tus herramientas, sin tocar otros MCP. No hay que configurar nada. Recarga el editor o la sesión después de instalar.
 
-**Necesita Node 24 o superior.** Sin él, `legal-advisor` responde solo con la guía y el comentario dice que no usó EUR-Lex. El resto del paquete funciona con Node 20.
+**Necesita Node 24 o superior.** Sin él, `legal-advisor` responde solo con la guía y el comentario dice que no usó EUR-Lex. El resto del paquete también pide Node 24 o superior: sus scripts lo comprueban.
 
 ## Documentación de compliance
 
@@ -255,19 +269,23 @@ La primera vez que el flujo lanza `bash`, `node`, `git` o `gh`, la herramienta p
 
 ## Trabajar en este repositorio
 
-Para cambiar delivery-workflow, instala antes el propio paquete con APM. Así tienes los agentes y las skills del flujo (`/delivery-workflow`, `/check-status`, `say-it-straight`…) y trabajas en este repositorio con la misma herramienta que lo usa.
+Este repositorio **es** el paquete. La fuente son las skills y los agentes en **`.apm/`** (sí van en git).
 
-1. Clona el repositorio y entra en su raíz.
-2. Instala el paquete para tu herramienta (`claude`, `cursor`, `codex` o varias separadas por comas):
+No ejecutes `apm install venturars/delivery-workflow#v1.4.2` aquí. Eso es para [Instalación en macOS y Linux](#instalación-en-macos-y-linux) en **otro** proyecto.
+
+1. Clona el repositorio y entra en su raíz. Ya tienes `.apm/` de la rama.
+2. Crea el `.env` con tu token, como explica [El token de GitHub](#el-token-de-github).
+3. Despliega el paquete **local** a tu herramienta:
 
    ```bash
-   apm install --target claude
+   apm install --target cursor
    ```
 
-3. Crea el `.env` con tu token, como explica [El token de GitHub](#el-token-de-github).
-4. Abre tu herramienta en la raíz y llama a `/delivery-workflow` (en Codex, `$delivery-workflow`) para abrir la issue, la rama y la pull request de tu cambio.
+   Cambia `cursor` por `claude`, `codex` o varios separados por comas. Eso copia `.apm/` a `.cursor/`, `.claude/`, `.agents/`, etc. **No** descarga una etiqueta de GitHub. Esas copias, `apm.lock.yaml` y `apm_modules/` son de tu máquina: están en `.gitignore` y no se suben.
 
-`apm install` genera `apm_modules/`, `apm.lock.yaml` y los directorios de tu herramienta. No los edites a mano. Las normas del cambio (issues, ramas, commits y pull requests) están en [CONTRIBUTING.md](CONTRIBUTING.md).
+4. Abre tu herramienta en esta carpeta y llama a `/delivery-workflow` (en Codex, `$delivery-workflow`).
+
+Los cambios de skills se editan en `.apm/`. Vuelve a lanzar `apm install --target …` para refrescar las copias. Las normas del cambio están en [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Más información
 
@@ -275,4 +293,5 @@ Para cambiar delivery-workflow, instala antes el propio paquete con APM. Así ti
 - [CHANGES.md](CHANGES.md): de dónde sale el paquete y qué cambia respecto al original.
 - [docs/MODELS.md](docs/MODELS.md): criterio de elección del modelo de cada agente y motivo por el que no se versiona.
 - [docs/MAINTENANCE.md](docs/MAINTENANCE.md): tests, prueba en un repositorio desechable y cómo publicar una versión.
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): mapa de capas de este repositorio.
 - [GLOSSARY.md](GLOSSARY.md): vocabulario del flujo.
