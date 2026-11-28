@@ -112,6 +112,7 @@ La prosa de issues, spec, pull requests y documentación del ciclo sigue la skil
 - **Una persona por issue.** Una sola persona lleva cada issue de principio a fin. Dos personas no trabajan juntas en la misma.
 - **Identidad personal.** Cada persona usa su propio token en su [`.env`](#el-fichero-env). En el forge, el flujo actúa con esa cuenta, no con una de servicio ni con un bot.
 - **Resultados según la herramienta.** La misma tarea puede dar resultados distintos en Claude Code, Cursor, Codex y opencode. Es lo esperado.
+- **Documentos del proyecto.** Los aporta el proyecto y los agentes leen los que existan. Si falta `docs/ARCHITECTURE.md`, `concept-developer` lo crea desde una plantilla al escribir la spec; lo que no puede deducir queda como hueco y el flujo pregunta.
 
 ### Permisos
 
